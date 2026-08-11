@@ -87,6 +87,26 @@ realtime subscription).
   immediately bouncing back to the server as if it were a local edit. Keep
   that guard if you touch the push/pull effects.
 
+## Desktop app (Electron)
+
+The app ships as a real Windows desktop app, not just a browser tab.
+[electron/main.cjs](electron/main.cjs) is the whole main process: one `BrowserWindow` that loads
+`http://localhost:5173` in dev or `dist/index.html` in production. No preload
+script, no IPC — the renderer only ever talks to Supabase over HTTPS/WSS, so
+default Electron security settings (`contextIsolation: true`, `nodeIntegration:
+false`) are enough with nothing extra to bridge.
+
+- `npm run electron:dev` — runs the Vite dev server and Electron together
+  (`concurrently` + `wait-on` so Electron waits for port 5173 before launching).
+- `npm run electron:build` — `vite build` then `electron-builder`, producing
+  a Windows installer under `release/`.
+- `vite.config.js` sets `base: "./"` — required so the built `dist/index.html`
+  resolves its asset paths under Electron's `file://` protocol; don't remove it.
+- **Known gotcha**: if the Vite dev server (or anything else watching the
+  project directory) is running while you `electron-builder` package the app,
+  the file watcher can hold a handle inside `release/win-unpacked.tmp` and
+  the final rename fails with `EPERM`. Stop the dev server before packaging.
+
 ## Conventions
 
 - No comments explaining *what* code does — the file already favors compact,
