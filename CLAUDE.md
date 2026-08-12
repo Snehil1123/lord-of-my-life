@@ -48,10 +48,13 @@ point is that one file is the source of truth for the whole app.
     task picker lists every unchecked task across Work *and* Personal (no
     week filter).
   - `BudgetView` — see "Budget" below.
-- **`TaskRow`/`AddTaskRow`/`toggleTask`** (above `WorkView` in the file) are
-  shared between `WorkView` and `PersonalView` — keep task-row rendering,
-  the add-task form, and the check/uncheck logic in these three rather than
-  re-forking them per view.
+- **`TaskRow`/`AddTaskRow`/`toggleTask`/`editTask`** (above `WorkView` in the
+  file) are shared between `WorkView` and `PersonalView` — keep task-row
+  rendering, the add-task form, and the check/uncheck/edit logic in these
+  rather than re-forking them per view. `TaskRow`'s pencil icon switches the
+  row into an inline edit form (title always; minutes/due date too, unless
+  the task has subtasks — see "Subtasks" below). `editTask()` recomputes
+  `est` from the edited minutes and clamps `done` so it never exceeds it.
 
 ## Data model quick reference
 
@@ -63,7 +66,7 @@ data = {
   projects: [{ id, name, color,
                 phases: [{ id, name, start, end, done }] }],
   tasks: [{ id, title, cat, minutes, est, done, checked, oneOnOne, dueDate,
-            recurring, seedKey, completedDate }],
+            recurring, seedKey, completedDate, subtasks? }],
   budget: { monthlyIncome, categories: [{ id, name, type, budget?,
               items: [{ id, name, amount, date }] }] },
 }
@@ -71,14 +74,20 @@ data = {
 
 `cat` is one of `WORK_CATS` ids (`research` / `fellowships` / `classwork` /
 `ta`) or `PERSONAL_CATS` ids (`exercise` / `music` / `other`). `minutes` is
-what the user typed when adding the task; `est` is `Math.ceil(minutes / 25)`
-computed once at creation time (sessions are assumed 25 minutes each) and is
-what actually drives the pomodoro-dot UI — `minutes` itself is just kept for
-reference/tooltips, nothing re-derives `est` from it later. `done` counts
-completed sessions against `est`. `dueDate` is `"YYYY-MM-DD" | null`, optional,
-set from `AddTaskRow`'s date input — see "Due dates" below. `recurring`/
-`seedKey`/`completedDate` only matter for the built-in Exercise habits — see
-below.
+what the user typed when adding the task; `est` is `estFor(minutes,
+data.settings.work)` (near `fmtMoney`, top of file) — sessions are assumed
+to be `data.settings.work` minutes long, **not** a hardcoded 25. `est` is
+recomputed (not just derived at creation) any time `minutes` changes *or*
+`settings.work` itself changes — see `recomputeSessions()` right below
+`estFor`, called from `SessionView`'s `setDur` whenever the user edits the
+focus-length field, so every task's dot count stays correct for whatever
+session length is currently configured rather than freezing at whatever it
+was when the task was created. `minutes` itself is kept for display/editing;
+nothing re-derives it from `est`. `done` counts completed sessions against
+`est`, clamped down whenever `est` shrinks so it can never exceed it.
+`dueDate` is `"YYYY-MM-DD" | null`, optional, set from `AddTaskRow`'s date
+input — see "Due dates" below. `recurring`/`seedKey`/`completedDate` only
+matter for the built-in Exercise habits — see below.
 
 Tasks created before this redesign may still have a stale `week` field or an
 old `cat` (`writing`/`admin`/`personal`) — those are simply harmless dead
@@ -144,6 +153,44 @@ UTC would roll a date over early for anyone west of UTC in the evening (e.g.
 date comparisons, and would have done the same to the recurring-task and
 `pomoLog` "today" checks. Don't reintroduce `toISOString()` for anything
 that means "today" in the user's local time.
+
+## Subtasks
+
+Any task (Work or Personal) can be expanded — via the `▸`/`▾` toggle at the
+right of `TaskRow`, not the `▸` count in the header — into a checklist of
+`subtasks: [{ id, title, minutes, checked, dueDate }]`. Once a task has at
+least one subtask, its own `minutes`, `est`, `dueDate`, and `checked` stop
+being independently meaningful — they're recomputed by `deriveFromSubtasks()`
+(above `updateSubtasks`, near `toggleTask`) every time the subtask list
+changes: `minutes` is a plain sum, `dueDate` is the *latest* subtask due date
+(you're not done until the last one lands), and `checked` is true only once
+every subtask is checked.
+
+- **All subtask mutations go through `updateSubtasks(data, setData, taskId, fn, setBurst)`**,
+  which applies `fn` to the task, re-derives it, and — if that derivation
+  flips `checked` from false to true — stamps `completedDate` and fires the
+  same particle-burst/sound as finishing a normal task. `addSubtask`/
+  `toggleSubtask`/`delSubtask` are thin wrappers around it; add any future
+  subtask operation the same way rather than mutating `tasks` directly, or
+  the parent won't re-derive and the completion burst won't fire.
+- **The parent checkbox becomes a bulk toggle once subtasks exist** —
+  `TaskRow` routes its `onClick` to `onToggleAll` instead of `onToggle`,
+  which (`toggleAllSubtasks`) sets every subtask to the opposite of the
+  parent's current `checked`. It no longer flips its own `checked` directly;
+  that would immediately be overwritten by the next derive anyway.
+- **The edit form hides the minutes/due-date fields when `t.subtasks.length > 0`**
+  and `commit()` sends a title-only patch. `editTask()` checks for
+  `patch.minutes === undefined` to tell "title-only" apart from "full edit"
+  — don't send `minutes: undefined` from anywhere else, it'll be read as
+  "leave minutes alone" rather than "clear it."
+- Subtasks reuse `taskUrgency`/`fmtDue`/the due-today/overdue glow classes
+  directly (`SubtaskRow`, right above `AddTaskRow`) since their shape
+  (`dueDate`, `checked`) matches what those helpers expect — no parallel
+  implementation needed.
+- If all of a task's subtasks are deleted, `deriveFromSubtasks` leaves the
+  parent's `minutes`/`est`/`dueDate`/`checked` at whatever they last derived
+  to (there's no "revert to manual" step). Not worth solving until someone
+  actually hits it on a single-user local app.
 
 ## Budget
 

@@ -144,7 +144,7 @@ const CSS = `
 .mono{font-family:var(--font-mono);}
 .xbtn{border:none; background:none; color:var(--muted); font-size:15px; padding:2px 6px; border-radius:6px; opacity:0; transition:opacity .12s;}
 .xbtn:hover{color:var(--tomato); background:var(--tomato-soft);}
-tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .xbtn{opacity:1;}
+tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .xbtn, .subtaskrow:hover .xbtn{opacity:1;}
 
 /* ---------- plan / gantt ---------- */
 .proj{margin-top:18px; overflow:hidden;}
@@ -224,6 +224,17 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .pdot.f{background:var(--tomato);}
 .pcount{font-family:var(--font-mono); font-size:12px; color:var(--muted); margin-left:2px;}
 .emptystate{color:var(--muted); font-size:14px; padding:18px 4px;}
+.subprogress{font-family:var(--font-mono); font-size:11.5px; color:var(--muted); flex:none;}
+.subtoggle{border:none; background:none; color:var(--muted); font-size:11px; padding:2px 4px; flex:none;}
+.subtoggle:hover{color:var(--ink);}
+.subtasks{background:var(--paper); border-bottom:1px solid var(--line-soft); padding:2px 12px 6px 44px;}
+.subtaskrow{display:flex; align-items:center; gap:8px; padding:5px 0;}
+.subtaskrow.done .subtasktitle{color:var(--muted); text-decoration:line-through; text-decoration-color:var(--pine);}
+.subtaskrow.due-today{border-radius:6px; box-shadow:inset 0 0 0 1px var(--amber), 0 0 8px -3px var(--amber);}
+.subtaskrow.overdue{border-radius:6px; animation:overdueglow 1.3s ease-in-out infinite;}
+.subtasktitle{font-size:13px; flex:1; min-width:0;}
+.check.small{width:17px; height:17px; font-size:10px; flex:none;}
+.subaddrow{padding:6px 0 2px; border-top:none; background:none;}
 
 /* ---------- focus / session ---------- */
 .focuswrap{display:flex; flex-direction:column; align-items:center; padding-top:16px;}
@@ -307,6 +318,17 @@ const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(3
 const fmtDue = (iso) => new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
 const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 const fmtMoney = (n) => n.toLocaleString(undefined, { style: "currency", currency: "USD" });
+// sessions needed for a task of this length, given the current focus-session length (data.settings.work)
+const estFor = (minutes, sessionMin) => Math.max(1, Math.ceil(minutes / sessionMin));
+// re-derives every task's est (and clamps done) when the focus-session length itself
+// changes, so existing tasks' dot counts track the new length instead of staying stuck at
+// whatever they were computed under. Tasks without a stored `minutes` (pre-redesign relics)
+// are left alone — there's no reliable way to recover their original length.
+const recomputeSessions = (tasks, sessionMin) => tasks.map((t) => {
+  if (t.minutes === undefined) return t;
+  const est = estFor(t.minutes, sessionMin);
+  return { ...t, est, done: Math.min(t.done, est) };
+});
 
 // null | "due-today" (gold) | "overdue" (pulsing red) — never fires for checked or date-less tasks.
 // "overdue" covers both a due date already in the past, and a due date of today once it's past 11pm.
@@ -361,9 +383,9 @@ const RECURRING_SEEDS = [
   { key: "ex-pullups", title: "20 pull-ups", minutes: 5 },
   { key: "ex-handstand", title: "Hand Stand (1 minute air time)", minutes: 5 },
 ];
-const recurringSeedTasks = () => RECURRING_SEEDS.map((s) => ({
+const recurringSeedTasks = (sessionMin = 25) => RECURRING_SEEDS.map((s) => ({
   id: uid(), title: s.title, cat: "exercise", minutes: s.minutes,
-  est: Math.max(1, Math.ceil(s.minutes / 25)), done: 0, checked: false,
+  est: estFor(s.minutes, sessionMin), done: 0, checked: false,
   oneOnOne: false, recurring: true, seedKey: s.key, completedDate: null,
 }));
 
@@ -444,7 +466,7 @@ function sampleData() {
 // without wiping anything they've already added. Never re-adds a seed the user deleted.
 function ensureRecurringSeeds(data) {
   if (data.seededRecurring) return data;
-  return { ...data, seededRecurring: true, tasks: [...data.tasks, ...recurringSeedTasks()] };
+  return { ...data, seededRecurring: true, tasks: [...data.tasks, ...recurringSeedTasks(data.settings.work)] };
 }
 
 // Recurring tasks reopen the day after they were completed.
@@ -831,19 +853,22 @@ function ProjectGantt({ project, data, setData, onDelete }) {
 }
 
 /* ================= SHARED TASK LIST PIECES ================= */
-function TaskRow({ t, burstId, onToggle, onDelete, onEdit, now }) {
+function TaskRow({ t, burstId, onToggle, onToggleAll, onDelete, onEdit, onAddSubtask, onToggleSubtask, onDeleteSubtask, now, sessionMin }) {
   const [editing, setEditing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [title, setTitle] = useState(t.title);
-  const [minutes, setMinutes] = useState(t.minutes || t.est * 25);
+  const [minutes, setMinutes] = useState(t.minutes || t.est * sessionMin);
   const [dueDate, setDueDate] = useState(t.dueDate || "");
 
+  const hasSubs = t.subtasks && t.subtasks.length > 0;
+
   const startEdit = () => {
-    setTitle(t.title); setMinutes(t.minutes || t.est * 25); setDueDate(t.dueDate || "");
+    setTitle(t.title); setMinutes(t.minutes || t.est * sessionMin); setDueDate(t.dueDate || "");
     setEditing(true);
   };
   const commit = () => {
     if (!title.trim()) return;
-    onEdit(t.id, { title: title.trim(), minutes: Math.max(5, +minutes || 25), dueDate: dueDate || null });
+    onEdit(t.id, hasSubs ? { title: title.trim() } : { title: title.trim(), minutes: Math.max(5, +minutes || 25), dueDate: dueDate || null });
     setEditing(false);
   };
 
@@ -854,13 +879,19 @@ function TaskRow({ t, burstId, onToggle, onDelete, onEdit, now }) {
       <div className="taskrow taskrow-editing">
         <input className="field" style={{ flex: 1, minWidth: 140 }} value={title}
           onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && commit()} autoFocus />
-        <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 5 }}>
-          <input type="number" min="5" step="5" className="field" style={{ width: 64 }} value={minutes}
-            onChange={(e) => setMinutes(e.target.value)} onKeyDown={(e) => e.key === "Enter" && commit()} /> min
-        </label>
-        <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 5 }}>
-          due <input type="date" className="field" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-        </label>
+        {hasSubs ? (
+          <span className="sub" style={{ fontSize: 12 }}>{t.subtasks.length} subtasks — time & due date follow them</span>
+        ) : (
+          <>
+            <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 5 }}>
+              <input type="number" min="5" step="5" className="field" style={{ width: 64 }} value={minutes}
+                onChange={(e) => setMinutes(e.target.value)} onKeyDown={(e) => e.key === "Enter" && commit()} /> min
+            </label>
+            <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 5 }}>
+              due <input type="date" className="field" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+            </label>
+          </>
+        )}
         <button className="btn primary" onClick={commit}>Save</button>
         <button className="btn ghost" onClick={() => setEditing(false)}>Cancel</button>
       </div>
@@ -868,43 +899,66 @@ function TaskRow({ t, burstId, onToggle, onDelete, onEdit, now }) {
   }
 
   return (
-    <div className={`taskrow ${t.checked ? "done" : ""} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}>
-      <span className="checkwrap">
-        <button className={`check ${t.checked ? "on" : ""}`} aria-label={t.checked ? "Mark not done" : "Mark done"} onClick={() => onToggle(t)}>✓</button>
-        {burstId === t.id && Array.from({ length: 10 }, (_, i) => {
-          const a = (i / 10) * Math.PI * 2;
-          const r = 22 + (i % 3) * 8;
-          const colors = ["var(--tomato)", "var(--pine)", "var(--amber)"];
-          return <span key={i} className="particle" style={{ background: colors[i % 3], "--dx": `${Math.cos(a) * r}px`, "--dy": `${Math.sin(a) * r}px` }} />;
-        })}
-      </span>
-      <span className="tasktitle">{t.title}</span>
-      {t.oneOnOne && <span className="tag11">1:1</span>}
-      {t.recurring && <span className="tag11" title="Reopens tomorrow">↻ daily</span>}
-      {t.dueDate && (
-        <span className="tagdue" style={{ color: urgency === "overdue" ? "var(--tomato)" : urgency === "due-today" ? "var(--amber)" : "var(--muted)" }}>
-          due {fmtDue(t.dueDate)}
+    <>
+      <div className={`taskrow ${t.checked ? "done" : ""} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}>
+        <span className="checkwrap">
+          <button className={`check ${t.checked ? "on" : ""}`} aria-label={t.checked ? "Mark not done" : "Mark done"}
+            onClick={() => (hasSubs ? onToggleAll() : onToggle(t))}>✓</button>
+          {burstId === t.id && Array.from({ length: 10 }, (_, i) => {
+            const a = (i / 10) * Math.PI * 2;
+            const r = 22 + (i % 3) * 8;
+            const colors = ["var(--tomato)", "var(--pine)", "var(--amber)"];
+            return <span key={i} className="particle" style={{ background: colors[i % 3], "--dx": `${Math.cos(a) * r}px`, "--dy": `${Math.sin(a) * r}px` }} />;
+          })}
         </span>
+        <span className="tasktitle">{t.title}</span>
+        {t.oneOnOne && <span className="tag11">1:1</span>}
+        {t.recurring && <span className="tag11" title="Reopens tomorrow">↻ daily</span>}
+        {t.dueDate && (
+          <span className="tagdue" style={{ color: urgency === "overdue" ? "var(--tomato)" : urgency === "due-today" ? "var(--amber)" : "var(--muted)" }}>
+            due {fmtDue(t.dueDate)}
+          </span>
+        )}
+        <span className="taskmin">{t.minutes || t.est * sessionMin} min</span>
+        <span className="pomodots" title={`${t.done}/${t.est} sessions · ${t.minutes || t.est * sessionMin} min`}>
+          {Array.from({ length: Math.min(t.est, 8) }, (_, i) => <span key={i} className={`pdot ${i < t.done ? "f" : ""}`} />)}
+          {t.est > 8 && <span className="pcount">{t.done}/{t.est}</span>}
+        </span>
+        {hasSubs && (
+          <span className="subprogress" title="Subtasks complete">
+            {t.subtasks.filter((s) => s.checked).length}/{t.subtasks.length}
+          </span>
+        )}
+        <button className="subtoggle" onClick={() => setExpanded((e) => !e)} title={expanded ? "Hide subtasks" : "Subtasks"}>
+          {expanded ? "▾" : "▸"}
+        </button>
+        <button className="xbtn" onClick={startEdit} title="Edit task">✎</button>
+        <button className="xbtn" onClick={() => onDelete(t.id)} title="Delete task">✕</button>
+      </div>
+      {expanded && (
+        <div className="subtasks">
+          {(t.subtasks || []).map((s) => (
+            <SubtaskRow key={s.id} sub={s} onToggle={() => onToggleSubtask(s.id)} onDelete={() => onDeleteSubtask(s.id)} now={now} />
+          ))}
+          <AddSubtaskRow onAdd={(title2, minutes2, dueDate2) => onAddSubtask(title2, minutes2, dueDate2)} />
+        </div>
       )}
-      <span className="taskmin">{t.minutes || t.est * 25} min</span>
-      <span className="pomodots" title={`${t.done}/${t.est} sessions · ${t.minutes || t.est * 25} min`}>
-        {Array.from({ length: Math.min(t.est, 8) }, (_, i) => <span key={i} className={`pdot ${i < t.done ? "f" : ""}`} />)}
-        {t.est > 8 && <span className="pcount">{t.done}/{t.est}</span>}
-      </span>
-      <button className="xbtn" onClick={startEdit} title="Edit task">✎</button>
-      <button className="xbtn" onClick={() => onDelete(t.id)} title="Delete task">✕</button>
-    </div>
+    </>
   );
 }
 
-// shared by WorkView/PersonalView — recomputes est from the edited minutes, clamps done so it never exceeds the new est
+// shared by WorkView/PersonalView — recomputes est from the edited minutes (using the
+// current focus-session length), clamps done so it never exceeds the new est. A task with
+// subtasks only ever sends a title-only patch (minutes/dueDate follow the subtasks).
 function editTask(data, setData, id, patch) {
-  const est = Math.max(1, Math.ceil(patch.minutes / 25));
   setData({
     ...data,
-    tasks: data.tasks.map((x) => (x.id === id
-      ? { ...x, title: patch.title, minutes: patch.minutes, dueDate: patch.dueDate, est, done: Math.min(x.done, est) }
-      : x)),
+    tasks: data.tasks.map((x) => {
+      if (x.id !== id) return x;
+      if (patch.minutes === undefined) return { ...x, title: patch.title };
+      const est = estFor(patch.minutes, data.settings.work);
+      return { ...x, title: patch.title, minutes: patch.minutes, dueDate: patch.dueDate, est, done: Math.min(x.done, est) };
+    }),
   });
 }
 
@@ -918,6 +972,98 @@ function toggleTask(data, setData, t, setBurst) {
       : x)),
   });
   if (nowChecked) { setBurst(t.id); popSound(); setTimeout(() => setBurst(null), 700); }
+}
+
+// A task with subtasks no longer controls its own minutes/dueDate/checked — they're
+// recomputed from the subtask list every time it changes. Time is a plain sum; due date
+// is the latest subtask due date (you're not done until the last one is); checked is
+// true only once every subtask is checked. est uses the current focus-session length.
+function deriveFromSubtasks(t, sessionMin) {
+  if (!t.subtasks || t.subtasks.length === 0) return t;
+  const minutes = t.subtasks.reduce((s, x) => s + x.minutes, 0);
+  const est = estFor(minutes, sessionMin);
+  const dueDates = t.subtasks.map((x) => x.dueDate).filter(Boolean).sort();
+  const dueDate = dueDates.length ? dueDates[dueDates.length - 1] : null;
+  const checked = t.subtasks.every((x) => x.checked);
+  return { ...t, minutes, est, dueDate, checked, done: Math.min(t.done, est) };
+}
+
+// shared by WorkView/PersonalView — runs any subtask mutation through deriveFromSubtasks,
+// and fires the same completion burst/completedDate stamp as toggleTask when the parent
+// transitions to fully done as a side effect (e.g. checking the last remaining subtask).
+function updateSubtasks(data, setData, taskId, fn, setBurst) {
+  const task = data.tasks.find((t) => t.id === taskId);
+  const wasChecked = task.checked;
+  let updated = deriveFromSubtasks(fn(task), data.settings.work);
+  if (!wasChecked && updated.checked) {
+    updated = { ...updated, completedDate: dateKey(new Date()) };
+    if (setBurst) { setBurst(taskId); popSound(); setTimeout(() => setBurst(null), 700); }
+  }
+  setData({ ...data, tasks: data.tasks.map((t) => (t.id === taskId ? updated : t)) });
+}
+const addSubtask = (data, setData, taskId, title, minutes, dueDate, setBurst) => updateSubtasks(
+  data, setData, taskId,
+  (t) => ({ ...t, subtasks: [...(t.subtasks || []), { id: uid(), title, minutes, checked: false, dueDate }] }),
+  setBurst,
+);
+const toggleSubtask = (data, setData, taskId, subId, setBurst) => updateSubtasks(
+  data, setData, taskId,
+  (t) => ({ ...t, subtasks: t.subtasks.map((s) => (s.id === subId ? { ...s, checked: !s.checked } : s)) }),
+  setBurst,
+);
+const delSubtask = (data, setData, taskId, subId, setBurst) => updateSubtasks(
+  data, setData, taskId,
+  (t) => ({ ...t, subtasks: t.subtasks.filter((s) => s.id !== subId) }),
+  setBurst,
+);
+// clicking the parent checkbox on a task with subtasks checks/unchecks all of them at once
+const toggleAllSubtasks = (data, setData, taskId, setBurst) => {
+  const task = data.tasks.find((t) => t.id === taskId);
+  const target = !task.checked;
+  updateSubtasks(data, setData, taskId, (t) => ({ ...t, subtasks: t.subtasks.map((s) => ({ ...s, checked: target })) }), setBurst);
+};
+
+function SubtaskRow({ sub, onToggle, onDelete, now }) {
+  const urgency = taskUrgency(sub, now);
+  return (
+    <div className={`subtaskrow ${sub.checked ? "done" : ""} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}>
+      <button className={`check small ${sub.checked ? "on" : ""}`} aria-label={sub.checked ? "Mark not done" : "Mark done"} onClick={onToggle}>✓</button>
+      <span className="subtasktitle">{sub.title}</span>
+      {sub.dueDate && (
+        <span className="tagdue" style={{ color: urgency === "overdue" ? "var(--tomato)" : urgency === "due-today" ? "var(--amber)" : "var(--muted)" }}>
+          due {fmtDue(sub.dueDate)}
+        </span>
+      )}
+      <span className="taskmin">{sub.minutes} min</span>
+      <button className="xbtn" onClick={onDelete} title="Delete subtask">✕</button>
+    </div>
+  );
+}
+
+function AddSubtaskRow({ onAdd }) {
+  const [title, setTitle] = useState("");
+  const [minutes, setMinutes] = useState(25);
+  const [dueDate, setDueDate] = useState("");
+
+  const submit = () => {
+    if (!title.trim()) return;
+    onAdd(title.trim(), Math.max(5, +minutes || 25), dueDate || null);
+    setTitle(""); setMinutes(25); setDueDate("");
+  };
+
+  return (
+    <div className="addrow subaddrow">
+      <input className="field" style={{ flex: 1, minWidth: 120 }} placeholder="Add a subtask…"
+        value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+      <label style={{ fontSize: 12, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}>
+        <input type="number" min="5" step="5" className="field" style={{ width: 56 }} value={minutes} onChange={(e) => setMinutes(e.target.value)} /> min
+      </label>
+      <label style={{ fontSize: 12, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}>
+        due <input type="date" className="field" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+      </label>
+      <button className="btn" onClick={submit}>Add</button>
+    </div>
+  );
 }
 
 function AddTaskRow({ onAdd }) {
@@ -957,12 +1103,16 @@ function WorkView({ data, setData, now }) {
   const tasks = data.tasks.filter((t) => WORK_CATS.some((c) => c.id === t.cat));
 
   const addTask = (catId, title, minutes, oneOnOne, dueDate) => {
-    const est = Math.max(1, Math.ceil(minutes / 25));
+    const est = estFor(minutes, data.settings.work);
     setData({ ...data, tasks: [...data.tasks, { id: uid(), title, cat: catId, minutes, est, done: 0, checked: false, oneOnOne, dueDate }] });
   };
   const toggle = (t) => toggleTask(data, setData, t, setBurst);
   const delTask = (id) => setData({ ...data, tasks: data.tasks.filter((x) => x.id !== id) });
   const edit = (id, patch) => editTask(data, setData, id, patch);
+  const toggleAll = (id) => toggleAllSubtasks(data, setData, id, setBurst);
+  const addSub = (id, title, minutes, dueDate) => addSubtask(data, setData, id, title, minutes, dueDate, setBurst);
+  const toggleSub = (id, subId) => toggleSubtask(data, setData, id, subId, setBurst);
+  const delSub = (id, subId) => delSubtask(data, setData, id, subId, setBurst);
 
   const doneCt = tasks.filter((t) => t.checked).length;
 
@@ -986,7 +1136,13 @@ function WorkView({ data, setData, now }) {
               <span className="catcount">{list.filter((t) => t.checked).length}/{list.length}</span>
             </div>
             <div className="card">
-              {list.map((t) => <TaskRow key={t.id} t={t} burstId={burst} onToggle={toggle} onDelete={delTask} onEdit={edit} now={now} />)}
+              {list.map((t) => (
+                <TaskRow key={t.id} t={t} burstId={burst} onToggle={toggle} onToggleAll={() => toggleAll(t.id)}
+                  onDelete={delTask} onEdit={edit} now={now} sessionMin={data.settings.work}
+                  onAddSubtask={(title, minutes, dueDate) => addSub(t.id, title, minutes, dueDate)}
+                  onToggleSubtask={(subId) => toggleSub(t.id, subId)}
+                  onDeleteSubtask={(subId) => delSub(t.id, subId)} />
+              ))}
               {list.length === 0 && <div className="emptystate" style={{ padding: "14px 16px" }}>No tasks yet.</div>}
               <AddTaskRow onAdd={(title, minutes, oneOnOne, dueDate) => addTask(c.id, title, minutes, oneOnOne, dueDate)} />
             </div>
@@ -1004,12 +1160,16 @@ function PersonalView({ data, setData, now }) {
   const tasks = data.tasks.filter((t) => PERSONAL_CATS.some((c) => c.id === t.cat));
 
   const addTask = (catId, title, minutes, oneOnOne, dueDate) => {
-    const est = Math.max(1, Math.ceil(minutes / 25));
+    const est = estFor(minutes, data.settings.work);
     setData({ ...data, tasks: [...data.tasks, { id: uid(), title, cat: catId, minutes, est, done: 0, checked: false, oneOnOne, dueDate }] });
   };
   const toggle = (t) => toggleTask(data, setData, t, setBurst);
   const delTask = (id) => setData({ ...data, tasks: data.tasks.filter((x) => x.id !== id) });
   const edit = (id, patch) => editTask(data, setData, id, patch);
+  const toggleAll = (id) => toggleAllSubtasks(data, setData, id, setBurst);
+  const addSub = (id, title, minutes, dueDate) => addSubtask(data, setData, id, title, minutes, dueDate, setBurst);
+  const toggleSub = (id, subId) => toggleSubtask(data, setData, id, subId, setBurst);
+  const delSub = (id, subId) => delSubtask(data, setData, id, subId, setBurst);
 
   const doneCt = tasks.filter((t) => t.checked).length;
 
@@ -1033,7 +1193,13 @@ function PersonalView({ data, setData, now }) {
               <span className="catcount">{list.filter((t) => t.checked).length}/{list.length}</span>
             </div>
             <div className="card">
-              {list.map((t) => <TaskRow key={t.id} t={t} burstId={burst} onToggle={toggle} onDelete={delTask} onEdit={edit} now={now} />)}
+              {list.map((t) => (
+                <TaskRow key={t.id} t={t} burstId={burst} onToggle={toggle} onToggleAll={() => toggleAll(t.id)}
+                  onDelete={delTask} onEdit={edit} now={now} sessionMin={data.settings.work}
+                  onAddSubtask={(title, minutes, dueDate) => addSub(t.id, title, minutes, dueDate)}
+                  onToggleSubtask={(subId) => toggleSub(t.id, subId)}
+                  onDeleteSubtask={(subId) => delSub(t.id, subId)} />
+              ))}
               {list.length === 0 && <div className="emptystate" style={{ padding: "14px 16px" }}>No tasks yet.</div>}
               <AddTaskRow onAdd={(title, minutes, oneOnOne, dueDate) => addTask(c.id, title, minutes, oneOnOne, dueDate)} />
             </div>
@@ -1327,7 +1493,8 @@ function SessionView({ data, setData, sessionEmoji }) {
 
   const setDur = (k, v) => {
     const val = Math.max(1, Math.min(120, +v || 1));
-    setData({ ...data, settings: { ...s, [k]: val } });
+    const tasks = k === "work" ? recomputeSessions(data.tasks, val) : data.tasks;
+    setData({ ...data, settings: { ...s, [k]: val }, tasks });
     if (!running) setLeft((k === "work" && mode === "work") || (k === "short" && mode === "short") || (k === "long" && mode === "long") ? val * 60 : left);
   };
 
