@@ -2,7 +2,7 @@
 
 A personal planner: big-picture project timelines (Gantt Chart), a fixed set
 of Work categories (Research / Fellowships / Classwork / TA) plus a separate
-Personal list, and pomodoro focus sessions (Session).
+Personal list, pomodoro focus sessions (Session), and a monthly Budget.
 
 ## Stack
 
@@ -30,7 +30,7 @@ point is that one file is the source of truth for the whole app.
 - **Persistence**: `loadData()` / `saveData()` read/write `localStorage` under
   key `lordofmylife:data`, debounced 500ms after `data` changes. No export/
   import — removed as unnecessary once cloud sync existed.
-- **Four views**, switched by the `view` tab in the header, all reading from
+- **Five views**, switched by the `view` tab in the header, all reading from
   the same `data`:
   - `GanttView` / `ProjectGantt` — projects → phases, rendered as a week-grid
     timeline. This is the only place "week" still means anything in the UI —
@@ -47,6 +47,7 @@ point is that one file is the source of truth for the whole app.
     increments `pomoLog[today]` and optionally a task's `done` count. Its
     task picker lists every unchecked task across Work *and* Personal (no
     week filter).
+  - `BudgetView` — see "Budget" below.
 - **`TaskRow`/`AddTaskRow`/`toggleTask`** (above `WorkView` in the file) are
   shared between `WorkView` and `PersonalView` — keep task-row rendering,
   the add-task form, and the check/uncheck logic in these three rather than
@@ -63,6 +64,8 @@ data = {
                 phases: [{ id, name, start, end, done }] }],
   tasks: [{ id, title, cat, minutes, est, done, checked, oneOnOne, dueDate,
             recurring, seedKey, completedDate }],
+  budget: { monthlyIncome, categories: [{ id, name, type, budget?,
+              items: [{ id, name, amount, date }] }] },
 }
 ```
 
@@ -141,6 +144,58 @@ UTC would roll a date over early for anyone west of UTC in the evening (e.g.
 date comparisons, and would have done the same to the recurring-task and
 `pomoLog` "today" checks. Don't reintroduce `toISOString()` for anything
 that means "today" in the user's local time.
+
+## Budget
+
+Two category `type`s, rendered by the same `BudgetView` but treated
+differently:
+
+- **`"fixed"`** (Housing, Loans, Investments, Monthly Fees) — the category's
+  `items` *are* the budget; there's no separate target to compare against.
+  `catTotal()` just sums `items` unconditionally, no date filtering. The user
+  can add/edit/delete line items (rent changes, a new subscription, etc.) via
+  the same `AddBudgetItemRow`/`BudgetRow` pieces used everywhere else in
+  Budget. `BudgetRow`'s name/amount are live `<input>`s, not static text —
+  `onUpdate(patch)` calls `updateItem()` in `BudgetView`. The amount input
+  buffers its string locally and only commits (clamped, coerced to a number)
+  on blur/Enter, so clearing the field to retype a value doesn't get
+  stomped by React re-coercing an empty string to `0` on every keystroke.
+- **`"budget"`** (Food, Free) — a monthly cap the user draws down by logging
+  purchases through the month. Each item gets `date: dateKey(now)` when
+  added; `itemsThisMonth()` filters to the current `monthKey(now)` so past
+  months' purchases stay in storage (for a future "view last month" feature,
+  not built yet) without counting against the current month's remaining
+  amount — nothing deletes old entries, the month just rolls over on its own
+  once the calendar turns.
+- **Free's `budget` is never read from storage** — `defaultBudget()` sets it
+  to `null` as a placeholder. `BudgetView` always computes it live as
+  `monthlyIncome - (sum of fixed categories) - Food's budget`, so editing
+  Housing/Loans/Investments/Fees/Food immediately changes what Free shows,
+  the same render it's edited in.
+- Ring/color logic: `var(--pine)` (or the category's own color) under 75%
+  spent, `var(--amber)` from 75% up to the cap, `var(--tomato)` once
+  `remaining` goes negative (shown as "over by $X" instead of "$X left").
+  This is plain color logic, not the due-date urgency system — don't reach
+  for `taskUrgency` here.
+- **Visuals** (above `BudgetView`): `BudgetDonut` is a ring chart of the
+  whole month's split across all six categories — same stroke-dasharray/
+  stroke-dashoffset arc technique as the Focus timer ring in `SessionView`,
+  just drawing six static arcs instead of animating one. `SegmentBar` fades
+  the same category color per item to show a fixed category's internal
+  composition (e.g. Rent vs. Utilities within Housing) without needing a
+  second color per item. `BudgetGauge` is deliberately the *same* ring as
+  the Focus timer, reused for Food/Free's spent/remaining — the intent is
+  that "budget" reads as another countdown, not a bolted-on chart style.
+  There's a 6th palette color, `--teal`, added solely so Free (whose color
+  would otherwise collide with Investments' pine) gets its own hue in the
+  donut/legend.
+- **Seeding**: `defaultBudget()` (Rent $400/Utilities $200, Loans $300,
+  Roth/Savings $200 each, Claude $17/Spotify $23.58/Gym $76.86, Food budget
+  $400, monthly income $3000) is in `sampleData()` for fresh installs;
+  `ensureBudgetSeed(data)` backfills it once for existing users, same
+  one-time-flag pattern as `ensureRecurringSeeds` (checks `data.budget`
+  itself rather than a separate flag, since this seeds the whole object
+  rather than merging into an existing array).
 
 ## Cloud sync
 

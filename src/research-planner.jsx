@@ -18,7 +18,7 @@ const CSS = `
   --line:#333F36; --line-soft:#262E28;
   --pine:#57B08A; --pine-soft:#1E3329;
   --tomato:#FF6E4A; --tomato-soft:#3B2018;
-  --amber:#E0AC5C; --slate:#7C93BE; --plum:#B084A8;
+  --amber:#E0AC5C; --slate:#7C93BE; --plum:#B084A8; --teal:#4FB0A6;
   --font-display:'Bricolage Grotesque',sans-serif;
   --font-body:'Inter',system-ui,sans-serif;
   --font-mono:'IBM Plex Mono',monospace;
@@ -32,7 +32,7 @@ const CSS = `
   --line:#5A4426; --line-soft:#3E301B;
   --pine:#7C9A5C; --pine-soft:#2A331C;
   --tomato:#B33A2A; --tomato-soft:#3D1B14;
-  --amber:#D8A62A; --slate:#5E7A93; --plum:#8C5A96;
+  --amber:#D8A62A; --slate:#5E7A93; --plum:#8C5A96; --teal:#5E8C82;
   --font-display:'Cinzel',serif;
   --font-body:'EB Garamond',Georgia,serif;
   --font-mono:'Space Mono',monospace;
@@ -144,7 +144,7 @@ const CSS = `
 .mono{font-family:var(--font-mono);}
 .xbtn{border:none; background:none; color:var(--muted); font-size:15px; padding:2px 6px; border-radius:6px; opacity:0; transition:opacity .12s;}
 .xbtn:hover{color:var(--tomato); background:var(--tomato-soft);}
-tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn{opacity:1;}
+tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .xbtn{opacity:1;}
 
 /* ---------- plan / gantt ---------- */
 .proj{margin-top:18px; overflow:hidden;}
@@ -243,6 +243,36 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn{opacity:1;}
 .durs{display:flex; gap:14px; margin-top:22px; align-items:center; color:var(--muted); font-size:13px;}
 .durs input{width:52px; text-align:center;}
 
+/* ---------- budget ---------- */
+.budgetrow{
+  display:flex; align-items:center; gap:10px; padding:9px 12px;
+  border-bottom:1px solid var(--line-soft); background:var(--card);
+}
+.budgetrow:last-child{border-bottom:none;}
+.budgetname-input, .budgetamt-input{
+  border:1px solid transparent; background:none; color:var(--ink); border-radius:6px; padding:4px 6px;
+}
+.budgetname-input:hover, .budgetamt-input:hover{border-color:var(--line-soft);}
+.budgetname-input:focus, .budgetamt-input:focus{border-color:var(--pine); outline:none; background:var(--paper);}
+.budgetname-input{font-size:15px; font-weight:500; flex:1; min-width:0;}
+.budgetamt-wrap{display:flex; align-items:center; gap:0; flex:none;}
+.budgetdollar{font-family:var(--font-mono); font-size:14px; color:var(--muted);}
+.budgetamt-input{font-family:var(--font-mono); font-size:14px; font-weight:600; width:74px; text-align:right; padding-left:1px;}
+.budgetoverview{display:flex; gap:28px; align-items:center; flex-wrap:wrap; padding:22px;}
+.budgetlegend{flex:1; min-width:220px; display:flex; flex-direction:column; gap:9px;}
+.legendrow{display:flex; align-items:center; gap:9px;}
+.legendname{flex:1; font-size:14px; font-weight:500;}
+.legendamt{font-family:var(--font-mono); font-size:13px; color:var(--muted);}
+.legendpct{font-family:var(--font-mono); font-size:12px; color:var(--muted); width:36px; text-align:right;}
+.segbar{display:flex; height:9px; border-radius:999px; overflow:hidden; background:var(--line-soft); margin:2px 0 12px;}
+.segbar > div{height:100%;}
+.gaugerow{display:flex; gap:20px; flex-wrap:wrap; align-items:center; padding:16px 16px 6px;}
+.gaugewrap{position:relative; width:140px; height:140px; flex:none;}
+.gaugetext{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;}
+.gaugebig{font-size:19px; font-weight:700;}
+.gaugesub{font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-top:2px;}
+.gaugemeta{flex:1; min-width:160px; font-size:13px; color:var(--muted);}
+
 @media (max-width:640px){
   .wrap{padding:18px 12px 70px;}
   .tabs{margin-left:0; width:100%; justify-content:space-between;}
@@ -273,6 +303,8 @@ const wkLabel = (d) => `W${String(isoWeek(d).week).padStart(2, "0")}`;
 const dateKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-3);
 const fmtDue = (iso) => new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+const fmtMoney = (n) => n.toLocaleString(undefined, { style: "currency", currency: "USD" });
 
 // null | "due-today" (gold) | "overdue" (pulsing red) — never fires for checked or date-less tasks.
 // "overdue" covers both a due date already in the past, and a due date of today once it's past 11pm.
@@ -333,6 +365,48 @@ const recurringSeedTasks = () => RECURRING_SEEDS.map((s) => ({
   oneOnOne: false, recurring: true, seedKey: s.key, completedDate: null,
 }));
 
+// Housing/Loans/Investments/Monthly Fees are fixed line items — their total *is* the
+// budget, no separate spending to track. Food/Free are the opposite: a monthly cap
+// (Free's is computed, not stored) that purchases logged during the month draw down.
+const BUDGET_CAT_META = {
+  housing: { color: "var(--slate)" },
+  loans: { color: "var(--plum)" },
+  investments: { color: "var(--pine)" },
+  fees: { color: "var(--amber)" },
+  food: { color: "var(--tomato)" },
+  free: { color: "var(--teal)" },
+};
+function defaultBudget() {
+  return {
+    monthlyIncome: 3000,
+    categories: [
+      { id: "housing", name: "Housing", type: "fixed", items: [
+        { id: uid(), name: "Rent", amount: 400 },
+        { id: uid(), name: "Utilities", amount: 200 },
+      ] },
+      { id: "loans", name: "Loans", type: "fixed", items: [
+        { id: uid(), name: "Loans", amount: 300 },
+      ] },
+      { id: "investments", name: "Investments", type: "fixed", items: [
+        { id: uid(), name: "Roth", amount: 200 },
+        { id: uid(), name: "Savings", amount: 200 },
+      ] },
+      { id: "fees", name: "Monthly Fees", type: "fixed", items: [
+        { id: uid(), name: "Claude", amount: 17 },
+        { id: uid(), name: "Spotify", amount: 23.58 },
+        { id: uid(), name: "Gym", amount: 76.86 },
+      ] },
+      { id: "food", name: "Food", type: "budget", budget: 400, items: [] },
+      { id: "free", name: "Free", type: "budget", budget: null, items: [] }, // budget computed at render time
+    ],
+  };
+}
+// One-time backfill for existing users, same pattern as ensureRecurringSeeds.
+function ensureBudgetSeed(data) {
+  if (data.budget) return data;
+  return { ...data, budget: defaultBudget() };
+}
+
 function sampleData() {
   const m0 = monday(new Date());
   const iso = (d) => d.toISOString().slice(0, 10);
@@ -340,6 +414,7 @@ function sampleData() {
     settings: { work: 25, short: 5, long: 15 },
     pomoLog: {},
     seededRecurring: true,
+    budget: defaultBudget(),
     projects: [
       {
         id: uid(), name: "Dissertation — Aim 2", color: PROJ_COLORS[0],
@@ -403,7 +478,7 @@ const THEME_LABEL = { dark: "📜 Fantasy", fantasy: "🌲 Modern" }; // label s
 
 /* ================================================================ */
 export default function LordOfMyLife() {
-  const [data, setData] = useState(() => resetRecurringTasks(ensureRecurringSeeds(loadData() || sampleData())));
+  const [data, setData] = useState(() => resetRecurringTasks(ensureBudgetSeed(ensureRecurringSeeds(loadData() || sampleData()))));
   const [view, setView] = useState("work");
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem(THEME_KEY) || "dark"; } catch (e) { return "dark"; }
@@ -452,7 +527,7 @@ export default function LordOfMyLife() {
         <span className="wkchip">{new Date().toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span>
         {todayPomos > 0 && <span className="todaypomos">{sessionEmoji} ×{todayPomos} today</span>}
         <nav className="tabs">
-          {[["gantt", "Gantt Chart"], ["work", "Work"], ["session", "Session"], ["personal", "Personal"]].map(([k, label]) => (
+          {[["gantt", "Gantt Chart"], ["work", "Work"], ["session", "Session"], ["personal", "Personal"], ["budget", "Budget"]].map(([k, label]) => (
             <button key={k} className={`tab ${view === k ? "on" : ""}`} onClick={() => setView(k)}>{label}</button>
           ))}
         </nav>
@@ -464,6 +539,7 @@ export default function LordOfMyLife() {
         {view === "work" && <WorkView data={data} setData={setData} now={now} />}
         {view === "session" && <SessionView data={data} setData={setData} sessionEmoji={sessionEmoji} />}
         {view === "personal" && <PersonalView data={data} setData={setData} now={now} />}
+        {view === "budget" && <BudgetView data={data} setData={setData} now={now} />}
       </main>
     </div>
   );
@@ -906,6 +982,230 @@ function PersonalView({ data, setData, now }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* ================= BUDGET ================= */
+function BudgetRow({ item, onUpdate, onDelete }) {
+  // buffered locally so typing "23." or clearing the field to retype doesn't get
+  // stomped by a controlled value re-coerced to a number on every keystroke
+  const [amountStr, setAmountStr] = useState(String(item.amount));
+  useEffect(() => { setAmountStr(String(item.amount)); }, [item.amount]);
+
+  const commitAmount = () => {
+    const v = Math.max(0, +amountStr || 0);
+    setAmountStr(String(v));
+    if (v !== item.amount) onUpdate({ amount: v });
+  };
+
+  return (
+    <div className="budgetrow">
+      <input className="budgetname-input" value={item.name} onChange={(e) => onUpdate({ name: e.target.value })} />
+      <span className="budgetamt-wrap">
+        <span className="budgetdollar">$</span>
+        <input type="number" min="0" step="0.01" className="budgetamt-input" value={amountStr}
+          onChange={(e) => setAmountStr(e.target.value)} onBlur={commitAmount}
+          onKeyDown={(e) => e.key === "Enter" && e.target.blur()} />
+      </span>
+      <button className="xbtn" onClick={() => onDelete(item.id)} title="Delete">✕</button>
+    </div>
+  );
+}
+
+function AddBudgetItemRow({ onAdd, placeholder }) {
+  const [name, setName] = useState("");
+  const [amount, setAmount] = useState("");
+
+  const submit = () => {
+    const amt = +amount;
+    if (!name.trim() || !amt || amt <= 0) return;
+    onAdd(name.trim(), amt);
+    setName(""); setAmount("");
+  };
+
+  return (
+    <div className="addrow">
+      <input className="field" style={{ flex: 1, minWidth: 140 }} placeholder={placeholder || "Add item…"}
+        value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+      <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 5 }}>
+        $ <input type="number" min="0" step="0.01" className="field" style={{ width: 80 }}
+          value={amount} onChange={(e) => setAmount(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+      </label>
+      <button className="btn" onClick={submit}>Add</button>
+    </div>
+  );
+}
+
+// Ring chart of the whole month's split — same stroke-dasharray/offset technique as
+// the Focus timer ring, just walked around the circle once per category instead of
+// redrawn every second.
+function BudgetDonut({ segments, total }) {
+  const R = 74, C = 2 * Math.PI * R;
+  let cumulative = 0;
+  return (
+    <div style={{ position: "relative", width: 168, height: 168, flex: "none" }}>
+      <svg width="168" height="168" viewBox="0 0 168 168">
+        <circle cx="84" cy="84" r={R} fill="none" stroke="var(--line-soft)" strokeWidth="20" />
+        {segments.filter((s) => s.amount > 0).map((s) => {
+          const frac = total > 0 ? s.amount / total : 0;
+          const dash = frac * C;
+          const offset = -cumulative * C;
+          cumulative += frac;
+          return (
+            <circle key={s.id} cx="84" cy="84" r={R} fill="none" stroke={s.color} strokeWidth="20"
+              strokeDasharray={`${dash} ${C - dash}`} strokeDashoffset={offset} transform="rotate(-90 84 84)" />
+          );
+        })}
+      </svg>
+      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+        <div className="mono" style={{ fontSize: 20, fontWeight: 700 }}>{fmtMoney(total)}</div>
+        <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".08em", color: "var(--muted)", marginTop: 2 }}>per month</div>
+      </div>
+    </div>
+  );
+}
+
+// Composition strip under a fixed category's header — same color, fading per item, so
+// e.g. Housing visibly shows Rent as the bigger chunk of the bar than Utilities.
+function SegmentBar({ items, color }) {
+  const total = items.reduce((s, i) => s + i.amount, 0) || 1;
+  return (
+    <div className="segbar">
+      {items.map((i, idx) => (
+        <div key={i.id} style={{ width: `${(i.amount / total) * 100}%`, background: color, opacity: 1 - idx * 0.22 }} title={`${i.name}: ${fmtMoney(i.amount)}`} />
+      ))}
+    </div>
+  );
+}
+
+// Spent/remaining ring for Food and Free — deliberately the same visual language as the
+// Focus timer ring (progress drains the same way), so "budget" reads as another kind of
+// countdown rather than a bolted-on unrelated widget.
+function BudgetGauge({ spent, budget, color }) {
+  const R = 62, C = 2 * Math.PI * R;
+  const pct = budget > 0 ? Math.min(1, spent / budget) : 0;
+  const remaining = budget - spent;
+  const over = remaining < 0;
+  const ringColor = over ? "var(--tomato)" : pct >= 0.75 ? "var(--amber)" : color;
+  return (
+    <div className="gaugewrap">
+      <svg width="140" height="140" viewBox="0 0 140 140">
+        <circle cx="70" cy="70" r={R} fill="none" stroke="var(--line)" strokeWidth="11" />
+        <circle cx="70" cy="70" r={R} fill="none" stroke={ringColor} strokeWidth="11" strokeLinecap="round"
+          strokeDasharray={C} strokeDashoffset={C * (1 - pct)} transform="rotate(-90 70 70)"
+          style={{ transition: "stroke-dashoffset .3s ease" }} />
+      </svg>
+      <div className="gaugetext">
+        <div className="gaugebig mono" style={{ color: over ? "var(--tomato)" : "var(--ink)" }}>{fmtMoney(Math.abs(remaining))}</div>
+        <div className="gaugesub">{over ? "over budget" : "left"}</div>
+      </div>
+    </div>
+  );
+}
+
+function BudgetView({ data, setData, now }) {
+  const budget = data.budget;
+  const thisMonth = monthKey(now);
+  const itemsThisMonth = (items) => items.filter((i) => (i.date || "").slice(0, 7) === thisMonth);
+
+  const catTotal = (cat) => cat.type === "fixed"
+    ? cat.items.reduce((s, i) => s + i.amount, 0)
+    : itemsThisMonth(cat.items).reduce((s, i) => s + i.amount, 0);
+
+  const fixedCats = budget.categories.filter((c) => c.type === "fixed");
+  const fixedTotal = fixedCats.reduce((s, c) => s + catTotal(c), 0);
+  const foodCat = budget.categories.find((c) => c.id === "food");
+  const freeCat = budget.categories.find((c) => c.id === "free");
+  const freeBudget = budget.monthlyIncome - fixedTotal - foodCat.budget;
+  const spendCats = [foodCat, { ...freeCat, budget: freeBudget }];
+
+  const updateCat = (catId, fn) => setData({
+    ...data,
+    budget: { ...budget, categories: budget.categories.map((c) => (c.id === catId ? fn(c) : c)) },
+  });
+  const addItem = (catId, name, amount) => updateCat(catId, (c) => ({ ...c, items: [...c.items, { id: uid(), name, amount, date: dateKey(now) }] }));
+  const updateItem = (catId, itemId, patch) => updateCat(catId, (c) => ({ ...c, items: c.items.map((i) => (i.id === itemId ? { ...i, ...patch } : i)) }));
+  const delItem = (catId, itemId) => updateCat(catId, (c) => ({ ...c, items: c.items.filter((i) => i.id !== itemId) }));
+  const setIncome = (v) => setData({ ...data, budget: { ...budget, monthlyIncome: Math.max(0, +v || 0) } });
+  const setFoodBudget = (v) => updateCat("food", (c) => ({ ...c, budget: Math.max(0, +v || 0) }));
+
+  const donutSegments = [
+    ...fixedCats.map((c) => ({ id: c.id, name: c.name, color: BUDGET_CAT_META[c.id]?.color, amount: catTotal(c) })),
+    { id: "food", name: "Food", color: BUDGET_CAT_META.food.color, amount: foodCat.budget },
+    { id: "free", name: "Free", color: BUDGET_CAT_META.free.color, amount: Math.max(0, freeBudget) },
+  ];
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <div className="h2">Budget</div>
+          <div className="sub">Food and Free are budgets you draw down as you log purchases — they reset on the 1st. Fixed costs are below.</div>
+        </div>
+        <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 6 }}>
+          monthly income $ <input type="number" min="0" className="field" style={{ width: 90 }} value={budget.monthlyIncome} onChange={(e) => setIncome(e.target.value)} />
+        </label>
+      </div>
+
+      <section className="card" style={{ marginTop: 18 }}>
+        <div className="budgetoverview">
+          <BudgetDonut segments={donutSegments} total={budget.monthlyIncome} />
+          <div className="budgetlegend">
+            {donutSegments.map((s) => (
+              <div className="legendrow" key={s.id}>
+                <span className="catdot" style={{ background: s.color }} />
+                <span className="legendname">{s.name}</span>
+                <span className="legendamt">{fmtMoney(s.amount)}</span>
+                <span className="legendpct">{budget.monthlyIncome > 0 ? Math.round((s.amount / budget.monthlyIncome) * 100) : 0}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <div className="catblock" style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
+        {spendCats.map((c) => {
+          const spent = itemsThisMonth(c.items).reduce((s, i) => s + i.amount, 0);
+          const monthItems = itemsThisMonth(c.items);
+          return (
+            <div key={c.id} className="card" style={{ flex: "1 1 320px" }}>
+              <div className="cathead" style={{ padding: "14px 16px 0" }}>
+                <span className="catdot" style={{ background: BUDGET_CAT_META[c.id]?.color }} />
+                <span className="catname" style={{ color: BUDGET_CAT_META[c.id]?.color }}>{c.name}</span>
+              </div>
+              <div className="gaugerow">
+                <BudgetGauge spent={spent} budget={c.budget} color={BUDGET_CAT_META[c.id]?.color} />
+                <div className="gaugemeta">
+                  spent {fmtMoney(spent)} of{" "}
+                  {c.id === "food"
+                    ? <input type="number" min="0" className="field" style={{ width: 64, padding: "2px 6px" }} value={c.budget} onChange={(e) => setFoodBudget(e.target.value)} />
+                    : <b style={{ color: "var(--ink)" }}>{fmtMoney(c.budget)}</b>}
+                </div>
+              </div>
+              {monthItems.map((i) => <BudgetRow key={i.id} item={i} onUpdate={(patch) => updateItem(c.id, i.id, patch)} onDelete={(id) => delItem(c.id, id)} />)}
+              {monthItems.length === 0 && <div className="emptystate" style={{ padding: "14px 16px" }}>Nothing logged this month yet.</div>}
+              <AddBudgetItemRow onAdd={(name, amount) => addItem(c.id, name, amount)} placeholder={`Add a ${c.name.toLowerCase()} purchase…`} />
+            </div>
+          );
+        })}
+      </div>
+
+      {fixedCats.map((c) => (
+        <div className="catblock" key={c.id}>
+          <div className="cathead">
+            <span className="catdot" style={{ background: BUDGET_CAT_META[c.id]?.color }} />
+            <span className="catname" style={{ color: BUDGET_CAT_META[c.id]?.color }}>{c.name}</span>
+            <span className="catcount">{fmtMoney(catTotal(c))}/mo</span>
+          </div>
+          {c.items.length > 0 && <SegmentBar items={c.items} color={BUDGET_CAT_META[c.id]?.color} />}
+          <div className="card">
+            {c.items.map((i) => <BudgetRow key={i.id} item={i} onUpdate={(patch) => updateItem(c.id, i.id, patch)} onDelete={(id) => delItem(c.id, id)} />)}
+            {c.items.length === 0 && <div className="emptystate" style={{ padding: "14px 16px" }}>No items yet.</div>}
+            <AddBudgetItemRow onAdd={(name, amount) => addItem(c.id, name, amount)} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
