@@ -217,7 +217,9 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 }
 .tagdue{font-family:var(--font-mono); font-size:11px; font-weight:600; flex:none;}
 .tagproj{font-size:12px; color:var(--muted); flex:none;}
-.pomodots{display:flex; gap:3px; margin-left:auto; flex:none; align-items:center;}
+.taskmin{font-family:var(--font-mono); font-size:12px; color:var(--muted); flex:none; margin-left:auto;}
+.pomodots{display:flex; gap:3px; flex:none; align-items:center;}
+.taskrow-editing{gap:8px; flex-wrap:wrap;}
 .pdot{width:8px; height:8px; border-radius:50%; border:1.5px solid var(--tomato); background:transparent;}
 .pdot.f{background:var(--tomato);}
 .pcount{font-family:var(--font-mono); font-size:12px; color:var(--muted); margin-left:2px;}
@@ -472,13 +474,20 @@ function saveData(data) {
   try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) { /* storage full or unavailable */ }
 }
 
+// Backfills missing fields (recurring seeds, budget) and reopens recurring tasks.
+// Applied to local loads AND cloud pulls — a cloud row can predate a field that was
+// added after sync already existed, so this can't just run once on initial load.
+function hydrate(d) {
+  return resetRecurringTasks(ensureBudgetSeed(ensureRecurringSeeds(d)));
+}
+
 const THEME_KEY = "lordofmylife:theme";
 const THEMES = { dark: "fantasy", fantasy: "dark" }; // maps a theme to "what toggling gives you"
 const THEME_LABEL = { dark: "📜 Fantasy", fantasy: "🌲 Modern" }; // label shows the theme you'd switch TO
 
 /* ================================================================ */
 export default function LordOfMyLife() {
-  const [data, setData] = useState(() => resetRecurringTasks(ensureBudgetSeed(ensureRecurringSeeds(loadData() || sampleData()))));
+  const [data, setData] = useState(() => hydrate(loadData() || sampleData()));
   const [view, setView] = useState("work");
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem(THEME_KEY) || "dark"; } catch (e) { return "dark"; }
@@ -571,14 +580,14 @@ function SyncBar({ data, setData }) {
         const row = await fetchCloudData(session.user.id);
         if (row) {
           skipNextPush.current = true;
-          setData(row.data);
+          setData(hydrate(row.data));
         } else {
           await pushCloudData(session.user.id, data);
         }
         setStatus("synced");
         unsubRealtime = subscribeToCloudData(session.user.id, (remoteData) => {
           skipNextPush.current = true;
-          setData(remoteData);
+          setData(hydrate(remoteData));
         });
       } catch (e) {
         setStatus("error");
@@ -822,8 +831,42 @@ function ProjectGantt({ project, data, setData, onDelete }) {
 }
 
 /* ================= SHARED TASK LIST PIECES ================= */
-function TaskRow({ t, burstId, onToggle, onDelete, now }) {
+function TaskRow({ t, burstId, onToggle, onDelete, onEdit, now }) {
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(t.title);
+  const [minutes, setMinutes] = useState(t.minutes || t.est * 25);
+  const [dueDate, setDueDate] = useState(t.dueDate || "");
+
+  const startEdit = () => {
+    setTitle(t.title); setMinutes(t.minutes || t.est * 25); setDueDate(t.dueDate || "");
+    setEditing(true);
+  };
+  const commit = () => {
+    if (!title.trim()) return;
+    onEdit(t.id, { title: title.trim(), minutes: Math.max(5, +minutes || 25), dueDate: dueDate || null });
+    setEditing(false);
+  };
+
   const urgency = taskUrgency(t, now);
+
+  if (editing) {
+    return (
+      <div className="taskrow taskrow-editing">
+        <input className="field" style={{ flex: 1, minWidth: 140 }} value={title}
+          onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && commit()} autoFocus />
+        <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 5 }}>
+          <input type="number" min="5" step="5" className="field" style={{ width: 64 }} value={minutes}
+            onChange={(e) => setMinutes(e.target.value)} onKeyDown={(e) => e.key === "Enter" && commit()} /> min
+        </label>
+        <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 5 }}>
+          due <input type="date" className="field" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+        </label>
+        <button className="btn primary" onClick={commit}>Save</button>
+        <button className="btn ghost" onClick={() => setEditing(false)}>Cancel</button>
+      </div>
+    );
+  }
+
   return (
     <div className={`taskrow ${t.checked ? "done" : ""} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}>
       <span className="checkwrap">
@@ -843,13 +886,26 @@ function TaskRow({ t, burstId, onToggle, onDelete, now }) {
           due {fmtDue(t.dueDate)}
         </span>
       )}
+      <span className="taskmin">{t.minutes || t.est * 25} min</span>
       <span className="pomodots" title={`${t.done}/${t.est} sessions · ${t.minutes || t.est * 25} min`}>
         {Array.from({ length: Math.min(t.est, 8) }, (_, i) => <span key={i} className={`pdot ${i < t.done ? "f" : ""}`} />)}
         {t.est > 8 && <span className="pcount">{t.done}/{t.est}</span>}
       </span>
+      <button className="xbtn" onClick={startEdit} title="Edit task">✎</button>
       <button className="xbtn" onClick={() => onDelete(t.id)} title="Delete task">✕</button>
     </div>
   );
+}
+
+// shared by WorkView/PersonalView — recomputes est from the edited minutes, clamps done so it never exceeds the new est
+function editTask(data, setData, id, patch) {
+  const est = Math.max(1, Math.ceil(patch.minutes / 25));
+  setData({
+    ...data,
+    tasks: data.tasks.map((x) => (x.id === id
+      ? { ...x, title: patch.title, minutes: patch.minutes, dueDate: patch.dueDate, est, done: Math.min(x.done, est) }
+      : x)),
+  });
 }
 
 // shared by WorkView/PersonalView — stamps completedDate so recurring tasks know when they were last finished
@@ -906,6 +962,7 @@ function WorkView({ data, setData, now }) {
   };
   const toggle = (t) => toggleTask(data, setData, t, setBurst);
   const delTask = (id) => setData({ ...data, tasks: data.tasks.filter((x) => x.id !== id) });
+  const edit = (id, patch) => editTask(data, setData, id, patch);
 
   const doneCt = tasks.filter((t) => t.checked).length;
 
@@ -929,7 +986,7 @@ function WorkView({ data, setData, now }) {
               <span className="catcount">{list.filter((t) => t.checked).length}/{list.length}</span>
             </div>
             <div className="card">
-              {list.map((t) => <TaskRow key={t.id} t={t} burstId={burst} onToggle={toggle} onDelete={delTask} now={now} />)}
+              {list.map((t) => <TaskRow key={t.id} t={t} burstId={burst} onToggle={toggle} onDelete={delTask} onEdit={edit} now={now} />)}
               {list.length === 0 && <div className="emptystate" style={{ padding: "14px 16px" }}>No tasks yet.</div>}
               <AddTaskRow onAdd={(title, minutes, oneOnOne, dueDate) => addTask(c.id, title, minutes, oneOnOne, dueDate)} />
             </div>
@@ -952,6 +1009,7 @@ function PersonalView({ data, setData, now }) {
   };
   const toggle = (t) => toggleTask(data, setData, t, setBurst);
   const delTask = (id) => setData({ ...data, tasks: data.tasks.filter((x) => x.id !== id) });
+  const edit = (id, patch) => editTask(data, setData, id, patch);
 
   const doneCt = tasks.filter((t) => t.checked).length;
 
@@ -975,7 +1033,7 @@ function PersonalView({ data, setData, now }) {
               <span className="catcount">{list.filter((t) => t.checked).length}/{list.length}</span>
             </div>
             <div className="card">
-              {list.map((t) => <TaskRow key={t.id} t={t} burstId={burst} onToggle={toggle} onDelete={delTask} now={now} />)}
+              {list.map((t) => <TaskRow key={t.id} t={t} burstId={burst} onToggle={toggle} onDelete={delTask} onEdit={edit} now={now} />)}
               {list.length === 0 && <div className="emptystate" style={{ padding: "14px 16px" }}>No tasks yet.</div>}
               <AddTaskRow onAdd={(title, minutes, oneOnOne, dueDate) => addTask(c.id, title, minutes, oneOnOne, dueDate)} />
             </div>
