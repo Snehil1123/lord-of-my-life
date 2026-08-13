@@ -128,7 +128,15 @@ const CSS = `
 }
 .fw[data-theme="fantasy"] .btn.primary:hover{background:linear-gradient(180deg,#9c7a28,#7c5c1c);}
 .fw[data-theme="fantasy"] .field{border-radius:4px;}
-.fw[data-theme="fantasy"] .check.on{box-shadow:0 0 0 3px rgba(216,166,42,.22), 0 0 12px rgba(216,166,42,.45);}
+/* a finished task is sealed with a glowing ember mark, not a green tick — the
+   ✓ text node is collapsed with font-size:0 and the glyph comes from ::before */
+.fw[data-theme="fantasy"] .check.on{
+  background:radial-gradient(circle at 50% 36%, #f0cd6c 0%, #c08823 46%, #6d4310 100%);
+  border-color:#e6c169; font-size:0;
+  box-shadow:0 0 0 3px rgba(216,166,42,.18), 0 0 14px rgba(216,166,42,.55);
+}
+.fw[data-theme="fantasy"] .check.on::before{content:"✦"; font-size:12px; line-height:1; color:#2b1a06;}
+.fw[data-theme="fantasy"] .check.small.on::before{font-size:9px;}
 .fw[data-theme="fantasy"] .todayline{
   background:var(--amber); box-shadow:0 0 8px 1px var(--amber);
   animation:wardpulse 2.4s ease-in-out infinite;
@@ -142,6 +150,124 @@ const CSS = `
 @keyframes runeglow{
   0%,100%{box-shadow:0 0 6px rgba(216,166,42,.2);}
   50%{box-shadow:0 0 20px 2px rgba(216,166,42,.5);}
+}
+
+/* ---------- fantasy ambience (forest, vines, motes) ----------
+   All decorative and all fantasy-only. The scene sits behind the content and is
+   pointer-events:none, so it can never swallow a click; every animation here is
+   switched off by the global prefers-reduced-motion rule at the bottom. */
+.fscene{position:fixed; inset:0; z-index:0; pointer-events:none; overflow:hidden;}
+/* faded at the top so the treetops dissolve into the page instead of drawing a
+   hard silhouette across whatever content happens to sit at that height */
+.fforest{
+  position:absolute; left:0; bottom:0; width:100%; height:36vh; min-height:180px;
+  -webkit-mask-image:linear-gradient(to top, #000 30%, transparent 96%);
+  mask-image:linear-gradient(to top, #000 30%, transparent 96%);
+}
+.fmote{
+  position:absolute; bottom:-14px; border-radius:50%;
+  background:radial-gradient(circle, rgba(255,247,214,1) 0%, rgba(250,216,132,.9) 34%, rgba(220,170,50,.42) 62%, rgba(216,166,42,0) 78%);
+  box-shadow:0 0 9px rgba(244,206,116,.6);
+  animation-name:motefloat; animation-timing-function:linear; animation-iteration-count:infinite;
+}
+@keyframes motefloat{
+  0%{transform:translate3d(0,0,0); opacity:0;}
+  14%{opacity:.9;}
+  78%{opacity:.65;}
+  100%{transform:translate3d(var(--drift), calc(-100vh - 40px), 0); opacity:0;}
+}
+/* Completing a task sets it alight; reopening one heals it back. Both are pure
+   CSS on a class the row wears for the length of the animation, so in the dark
+   theme these selectors don't match and the row just flips state as it always
+   did. The particle burst is the dark theme's celebration — hidden here, since
+   fire and confetti at the same time is a mess.
+   (No backticks in this string: the whole CSS block is a JS template literal.) */
+.fw[data-theme="fantasy"] .particle{display:none;}
+
+/* A finished task stays burnt. This is the resting state, not part of the
+   animation — it holds until the task is reopened. */
+.fw[data-theme="fantasy"] .taskrow.done,
+.fw[data-theme="fantasy"] .qrow.done{
+  background:linear-gradient(180deg,#170e06 0%,#0a0503 100%);
+  box-shadow:inset 0 0 26px rgba(0,0,0,.8), inset 0 -1px 0 rgba(214,118,38,.18);
+  border-color:#2a1a0b;
+}
+/* readable against the char, but clearly spent — this is a finished task */
+.fw[data-theme="fantasy"] .taskrow.done .tasktitle,
+.fw[data-theme="fantasy"] .qrow.done .tasktitle{color:#8d7458; text-decoration-color:#a8681f;}
+.fw[data-theme="fantasy"] .taskrow.done .taskmin,
+.fw[data-theme="fantasy"] .taskrow.done .tagdue,
+.fw[data-theme="fantasy"] .taskrow.done .pcount,
+.fw[data-theme="fantasy"] .qrow.done .pcount{color:#5c4936;}
+
+/* The burn: a sheet painted in the row's *normal* colour is wiped away left to
+   right, uncovering the charred row underneath, with flame riding the wipe edge.
+   Stacking matters — cover beneath the text (z 0), text above it (z 2), flame
+   over everything (z 3) so it licks across the words rather than under them. */
+.fw[data-theme="fantasy"] .taskrow.burning,
+.fw[data-theme="fantasy"] .qrow.burning,
+.fw[data-theme="fantasy"] .taskrow.healing,
+.fw[data-theme="fantasy"] .qrow.healing{overflow:hidden;}
+.fw[data-theme="fantasy"] .taskrow.burning > *,
+.fw[data-theme="fantasy"] .qrow.burning > *,
+.fw[data-theme="fantasy"] .taskrow.healing > *,
+.fw[data-theme="fantasy"] .qrow.healing > *{position:relative; z-index:2;}
+.fw[data-theme="fantasy"] .taskrow.burning::before,
+.fw[data-theme="fantasy"] .qrow.burning::before{
+  content:""; position:absolute; inset:0; z-index:0; pointer-events:none;
+  background:var(--card); animation:charwipe 1.15s ease-in-out both;
+}
+@keyframes charwipe{
+  0%{clip-path:inset(0 0 0 0);}
+  100%{clip-path:inset(0 0 0 100%);}
+}
+.fw[data-theme="fantasy"] .taskrow.burning::after,
+.fw[data-theme="fantasy"] .qrow.burning::after{
+  content:""; position:absolute; top:-95%; bottom:-30%; left:-20%; width:36%;
+  z-index:3; pointer-events:none; filter:blur(5px);
+  background:
+    radial-gradient(38% 46% at 20% 76%, rgba(255,238,178,.98), rgba(255,168,44,.85) 42%, rgba(206,58,12,.34) 68%, transparent 80%),
+    radial-gradient(30% 62% at 45% 58%, rgba(255,224,132,.95), rgba(255,140,26,.74) 45%, transparent 78%),
+    radial-gradient(26% 54% at 70% 68%, rgba(255,206,110,.9), rgba(232,110,20,.68) 45%, transparent 76%),
+    radial-gradient(20% 40% at 88% 82%, rgba(255,182,82,.8), transparent 72%);
+  animation:flamesweep 1.15s ease-in-out both, flicker .17s ease-in-out infinite;
+}
+@keyframes flamesweep{
+  0%{transform:translateX(-45%);}
+  100%{transform:translateX(330%);}
+}
+/* flicker changes opacity/blur, never transform — a second transform animation
+   would simply override flamesweep's rather than compose with it */
+@keyframes flicker{
+  0%,100%{opacity:1; filter:blur(5px);}
+  50%{opacity:.84; filter:blur(6.5px);}
+}
+/* The title only dims and gets struck through once the flame has passed. The
+   from-values override .done's styling during the delay (backwards fill), so
+   the task reads as intact right up to the moment it's spent. */
+.fw[data-theme="fantasy"] .taskrow.burning .tasktitle,
+.fw[data-theme="fantasy"] .qrow.burning .tasktitle{animation:charrtext .28s ease-out .92s both;}
+@keyframes charrtext{
+  from{color:var(--ink); text-decoration-color:transparent;}
+  to{color:#8d7458; text-decoration-color:#a8681f;}
+}
+
+/* The heal is the same wipe in reverse: a charred sheet is pulled away to
+   uncover the restored row, lit by a gold-green wisp instead of flame. */
+.fw[data-theme="fantasy"] .taskrow.healing::before,
+.fw[data-theme="fantasy"] .qrow.healing::before{
+  content:""; position:absolute; inset:0; z-index:0; pointer-events:none;
+  background:linear-gradient(180deg,#170e06 0%,#0a0503 100%);
+  animation:charwipe 1s ease-in-out both;
+}
+.fw[data-theme="fantasy"] .taskrow.healing::after,
+.fw[data-theme="fantasy"] .qrow.healing::after{
+  content:""; position:absolute; top:-70%; bottom:-25%; left:-18%; width:32%;
+  z-index:3; pointer-events:none; filter:blur(6px);
+  background:
+    radial-gradient(40% 52% at 38% 62%, rgba(226,255,206,.95), rgba(146,214,116,.72) 45%, transparent 78%),
+    radial-gradient(28% 46% at 66% 54%, rgba(246,236,172,.88), rgba(196,222,126,.5) 50%, transparent 76%);
+  animation:flamesweep 1s ease-in-out both, flicker .24s ease-in-out infinite;
 }
 
 *{box-sizing:border-box; margin:0;}
@@ -180,7 +306,8 @@ const CSS = `
 .todaypomos{font-family:var(--font-mono); font-size:13px; color:var(--tomato); font-weight:600;}
 
 /* ---------- shared ---------- */
-.wrap{max-width:1060px; margin:0 auto; padding:26px 22px 80px;}
+/* above .fscene, which is fixed at z-index 0 behind the content */
+.wrap{max-width:1060px; margin:0 auto; padding:26px 22px 80px; position:relative; z-index:1;}
 .h2{font-family:var(--font-display); font-weight:700; font-size:24px; letter-spacing:-0.02em;}
 .sub{color:var(--muted); font-size:14px; margin-top:2px;}
 .card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius);}
@@ -770,6 +897,7 @@ export default function LordOfMyLife() {
   return (
     <div className={`fw ${aiOpen ? "aiopen" : ""}`} data-theme={theme} style={{ "--aiw": `${aiWidth}px` }}>
       <style>{CSS}</style>
+      {theme === "fantasy" && <FantasyScene />}
       <header className="hd">
         <button className="brand" title={`Switch to the ${THEMES[theme]} theme`} onClick={() => setTheme(THEMES[theme])}>
           Lord of <em>my Life</em>
@@ -795,6 +923,49 @@ export default function LordOfMyLife() {
         <AiPanel dataRef={dataRef} setData={setData} onClose={() => setAiOpen(false)}
           label={assistantLabel} width={aiWidth} setWidth={setAiWidth} />
       )}
+    </div>
+  );
+}
+
+/* ================= FANTASY AMBIENCE ================= */
+
+// Firs as plain triangles: at these opacities the silhouette reads as a treeline
+// long before anyone can pick out an individual tree, so detail would be wasted.
+// Deterministic (no Math.random) — a reshuffling forest on every render would be
+// exactly the kind of movement that pulls the eye away from the planner.
+const firs = (count, baseH, jitter, W = 1200, H = 260) =>
+  Array.from({ length: count }, (_, i) => {
+    const step = W / count;
+    const x = (i + 0.5) * step + ((i * jitter) % 34) - 17;
+    const h = baseH + ((i * jitter * 7) % 58);
+    const w = h * 0.3;
+    return `M${(x - w).toFixed(1)} ${H} L${x.toFixed(1)} ${(H - h).toFixed(1)} L${(x + w).toFixed(1)} ${H} Z`;
+  }).join(" ");
+
+const MOTES = Array.from({ length: 30 }, (_, i) => ({
+  // golden ratio stride so they scatter across the width instead of banding
+  left: (i * 61.8 + 4) % 97,
+  size: 3 + (i % 5) * 1.4,
+  // slow enough to read as drifting rather than rising — roughly a minute to cross
+  dur: 44 + (i % 7) * 7,
+  delay: -((i * 5.7) % 46),
+  drift: (i % 2 ? 1 : -1) * (14 + (i % 4) * 10),
+}));
+
+function FantasyScene() {
+  return (
+    <div className="fscene" aria-hidden="true">
+      <svg className="fforest" viewBox="0 0 1200 260" preserveAspectRatio="xMidYMax slice">
+        <path d={firs(22, 62, 5)} fill="rgba(124,154,92,.08)" />
+        <path d={firs(15, 104, 11)} fill="rgba(9,7,3,.34)" />
+        <path d={firs(9, 150, 23)} fill="rgba(6,4,2,.44)" />
+      </svg>
+      {MOTES.map((m, i) => (
+        <span key={i} className="fmote" style={{
+          left: `${m.left}%`, width: m.size, height: m.size,
+          animationDuration: `${m.dur}s`, animationDelay: `${m.delay}s`, "--drift": `${m.drift}px`,
+        }} />
+      ))}
     </div>
   );
 }
@@ -910,7 +1081,6 @@ function GanttView({ data, setData, now }) {
       <div style={{ display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 220 }}>
           <div className="h2">Big picture</div>
-          <div className="sub">Each project is a timeline of phases. Click a bar to mark a phase complete.</div>
         </div>
         <input className="field" placeholder="New project name" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addProject()} />
         <button className="btn primary" onClick={addProject}>Add project</button>
@@ -1217,7 +1387,7 @@ function SectionEditor({ section, cats, onAddPhase, onAddTask }) {
   );
 }
 
-function TaskRow({ t, burstId, onToggle, onToggleAll, onDelete, onEdit, onAddSubtask, onToggleSubtask, onDeleteSubtask, onEditSubtask, now, sessionMin }) {
+function TaskRow({ t, burst, onToggle, onToggleAll, onDelete, onEdit, onAddSubtask, onToggleSubtask, onDeleteSubtask, onEditSubtask, now, sessionMin }) {
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [title, setTitle] = useState(t.title);
@@ -1264,11 +1434,11 @@ function TaskRow({ t, burstId, onToggle, onToggleAll, onDelete, onEdit, onAddSub
 
   return (
     <>
-      <div className={`taskrow ${t.checked ? "done" : ""} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}>
+      <div className={`taskrow ${t.checked ? "done" : ""} ${burstClass(burst, t.id)} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}>
         <span className="checkwrap">
           <button className={`check ${t.checked ? "on" : ""}`} aria-label={t.checked ? "Mark not done" : "Mark done"}
             onClick={() => (hasSubs ? onToggleAll() : onToggle(t))}>✓</button>
-          {burstId === t.id && Array.from({ length: 10 }, (_, i) => {
+          {burst?.id === t.id && burst.kind === "done" && Array.from({ length: 10 }, (_, i) => {
             const a = (i / 10) * Math.PI * 2;
             const r = 22 + (i % 3) * 8;
             const colors = ["var(--tomato)", "var(--pine)", "var(--amber)"];
@@ -1327,6 +1497,22 @@ function editTask(data, setData, id, patch) {
   });
 }
 
+/* The completion flourish. `burst` is {id, kind} rather than a bare id because
+   fantasy animates *both* directions — "done" burns the row, "undone" heals it —
+   while dark only has a celebration for finishing, so it ignores "undone". */
+// Must outlast the longest fantasy animation, or the class is pulled mid-flame:
+// the burn runs 1.15s and the delayed strikethrough finishes at 1.2s.
+const BURST_MS = 1250;
+// "" in dark, where neither class has any rules — the flourish is fantasy-only
+const burstClass = (burst, id) =>
+  burst?.id === id ? (burst.kind === "done" ? "burning" : "healing") : "";
+function fireBurst(setBurst, id, kind) {
+  if (!setBurst) return;
+  setBurst({ id, kind });
+  if (kind === "done") popSound();
+  setTimeout(() => setBurst(null), BURST_MS);
+}
+
 // shared by WorkView/PersonalView — stamps completedDate so recurring tasks know when they were last finished
 function toggleTask(data, setData, t, setBurst) {
   const nowChecked = !t.checked;
@@ -1336,7 +1522,7 @@ function toggleTask(data, setData, t, setBurst) {
       ? { ...x, checked: nowChecked, completedDate: nowChecked ? dateKey(new Date()) : x.completedDate }
       : x)),
   });
-  if (nowChecked) { setBurst(t.id); popSound(); setTimeout(() => setBurst(null), 700); }
+  fireBurst(setBurst, t.id, nowChecked ? "done" : "undone");
 }
 
 // A task with subtasks no longer controls its own minutes/dueDate/checked — they're
@@ -1362,7 +1548,10 @@ function updateSubtasks(data, setData, taskId, fn, setBurst) {
   let updated = deriveFromSubtasks(fn(task), data.settings.work);
   if (!wasChecked && updated.checked) {
     updated = { ...updated, completedDate: dateKey(new Date()) };
-    if (setBurst) { setBurst(taskId); popSound(); setTimeout(() => setBurst(null), 700); }
+    fireBurst(setBurst, taskId, "done");
+  } else if (wasChecked && !updated.checked) {
+    // unchecking a subtask reopens the parent — heal it, same as unchecking it directly
+    fireBurst(setBurst, taskId, "undone");
   }
   setData({ ...data, tasks: data.tasks.map((t) => (t.id === taskId ? updated : t)) });
 }
@@ -1507,7 +1696,7 @@ function AddTaskRow({ onAdd }) {
    Both are the same view over a different `group` of categories, so they share
    one body. Categories come from data.categories, so the sections here are
    whatever the user has made rather than a fixed list. */
-function TaskGroupView({ data, setData, now, group, title, blurb }) {
+function TaskGroupView({ data, setData, now, group, title }) {
   const [burst, setBurst] = useState(null); // task id currently bursting
   const [newCat, setNewCat] = useState("");
   // the dragged id lives in a ref, not state: the drop handler needs it synchronously
@@ -1566,7 +1755,6 @@ function TaskGroupView({ data, setData, now, group, title, blurb }) {
       <div style={{ display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 220 }}>
           <div className="h2">{title}</div>
-          <div className="sub">{blurb}</div>
         </div>
         <span className="catcount">{doneCt}/{tasks.length} done</span>
       </div>
@@ -1594,7 +1782,7 @@ function TaskGroupView({ data, setData, now, group, title, blurb }) {
             </div>
             <div className="card">
               {list.map((t) => (
-                <TaskRow key={t.id} t={t} burstId={burst} onToggle={toggle} onToggleAll={() => toggleAll(t.id)}
+                <TaskRow key={t.id} t={t} burst={burst} onToggle={toggle} onToggleAll={() => toggleAll(t.id)}
                   onDelete={delTask} onEdit={edit} now={now} sessionMin={data.settings.work}
                   onAddSubtask={(t2, minutes, dueDate) => addSub(t.id, t2, minutes, dueDate)}
                   onToggleSubtask={(subId) => toggleSub(t.id, subId)}
@@ -1617,14 +1805,8 @@ function TaskGroupView({ data, setData, now, group, title, blurb }) {
   );
 }
 
-const WorkView = (props) => (
-  <TaskGroupView {...props} group="work" title="Work"
-    blurb="Research, fellowships, classwork, and anything else you add. Give a task a length in minutes and an optional due date — sessions fill in automatically." />
-);
-const PersonalView = (props) => (
-  <TaskGroupView {...props} group="personal" title="Personal"
-    blurb={'Exercise, music, and everything else. The Exercise habits marked "↻ daily" reopen automatically each day.'} />
-);
+const WorkView = (props) => <TaskGroupView {...props} group="work" title="Work" />;
+const PersonalView = (props) => <TaskGroupView {...props} group="personal" title="Personal" />;
 
 /* ================= BUDGET ================= */
 function BudgetRow({ item, onUpdate, onDelete }) {
@@ -1828,7 +2010,6 @@ function BudgetView({ data, setData, now }) {
       <div style={{ display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 220 }}>
           <div className="h2">Budget</div>
-          <div className="sub">Food and Free are budgets you draw down as you log purchases — they reset on the 1st. Fixed costs are below.</div>
         </div>
         <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 6 }}>
           monthly income $ <input type="number" min="0" className="field" style={{ width: 90 }} value={budget.monthlyIncome} onChange={(e) => setIncome(e.target.value)} />
@@ -2034,11 +2215,11 @@ function SessionView({ data, setData, sessionEmoji, now }) {
       {queue.map((t) => {
         const isActive = active && t.id === active.id;
         return (
-          <div key={t.id} className={`qrow ${t.checked ? "done" : ""} ${isActive ? "active" : ""}`}
+          <div key={t.id} className={`qrow ${t.checked ? "done" : ""} ${burstClass(burst, t.id)} ${isActive ? "active" : ""}`}
             onClick={() => completeTask(t)} title="Click to mark done">
             <span className="checkwrap">
               <button className={`check ${t.checked ? "on" : ""}`} aria-label={t.checked ? "Mark not done" : "Mark done"}>✓</button>
-              {burst === t.id && Array.from({ length: 8 }, (_, i) => (
+              {burst?.id === t.id && burst.kind === "done" && Array.from({ length: 8 }, (_, i) => (
                 <span key={i} className="particle" style={{
                   background: catColorFor(allCats(data), t.cat),
                   "--dx": `${Math.cos((i / 8) * 6.28) * 26}px`,

@@ -504,6 +504,51 @@ text, and `THEMES` maps the current theme to the one you'd get.
   Pick the scale by which font the element uses.
 - `.tagdue`, `.taskmin` and `.pcount` annotate the same row and are deliberately
   the same size in both themes — they looked untidy when they drifted apart.
+- **Fantasy ambience** (`FantasyScene`, above `SyncBar`) is a forest silhouette
+  along the bottom plus a handful of drifting golden motes, rendered only when
+  `theme === "fantasy"`. All of it is inline SVG and CSS — no image assets, so
+  nothing extra to package. Rules to keep if you touch it:
+  - `.fscene` is `position:fixed; z-index:0; pointer-events:none`, and `.wrap`
+    carries `position:relative; z-index:1` to sit above it. Without that pairing
+    the treeline paints over the cards.
+  - The forest is masked with a `linear-gradient` to top so the treetops fade
+    out; unmasked, a hard silhouette cuts across whatever content is at that
+    height.
+  - Tree positions are **deterministic**, derived from the index — no
+    `Math.random()`. A forest that reshuffled on every render would be exactly
+    the distracting movement this is supposed to avoid.
+  - Motes take ~45–90s to cross the screen (~20px/s). Faster reads as rising
+    rather than drifting and pulls the eye.
+- **Completing a task burns it; reopening heals it** — fantasy only.
+  - The charred look lives on `.taskrow.done`/`.qrow.done`, *not* in the
+    animation, so a finished task stays burnt until it's reopened.
+  - The burn is a **wipe, not a fade**: `::before` is a sheet painted in the
+    row's normal colour, removed left to right by `charwipe` (a `clip-path`
+    inset) to uncover the charred row beneath, while `::after` carries the
+    flame along the wipe edge. The heal is the same wipe with a charred sheet
+    and a gold-green wisp, uncovering the restored row.
+  - **Stacking is load-bearing**: cover at `z-index:0`, the row's children
+    lifted to `2`, flame at `3`. Without that the cover paints over the text
+    (pseudo-elements outrank in-flow content) and the title appears to be drawn
+    in as the flame passes.
+  - `flicker` animates opacity/blur only. A second `transform` animation would
+    override `flamesweep`'s rather than compose with it.
+  - Both are pure CSS on a class the row wears for `BURST_MS`, so the dark theme
+    — where none of these selectors match — just flips state as before. The
+    particle burst is dark's celebration and is hidden in fantasy.
+- **The completed checkbox is an ember seal in fantasy, not a green tick.** The
+  ✓ text node is collapsed with `font-size:0` and the glyph comes from
+  `.check.on::before`, which avoids threading a per-theme glyph through
+  `TaskRow`/`SubtaskRow`/the session rows.
+- **`burst` is `{ id, kind }`, not a bare task id.** Fantasy animates *both*
+  directions, so `toggleTask`/`updateSubtasks` fire `fireBurst(setBurst, id,
+  "done" | "undone")`; dark ignores `"undone"` because nothing matches it.
+  `burstClass()` turns that into the row's class and returns `""` when the burst
+  belongs to another row. Unchecking a subtask that reopens its parent heals the
+  parent, same as unchecking it directly.
+- **No backticks anywhere in the `CSS` string** — the whole thing is a JS
+  template literal, so a backtick in even a CSS *comment* ends the string and
+  the file fails to parse.
 - Fantasy-only decoration (ember-glow brand text, button shimmer sweep,
   the Gantt today-line's `wardpulse`, the Focus ring's `runeglow` when
   running) lives in `.fw[data-theme="fantasy"] ...` rules near the top of
