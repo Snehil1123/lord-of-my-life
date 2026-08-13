@@ -492,11 +492,18 @@ text, and `THEMES` maps the current theme to the one you'd get.
   underneath since all rules consume colors/fonts via `var(...)`.
 - **Fantasy runs at larger type than `dark`.** EB Garamond has a much smaller
   x-height than Inter, so the same px reads noticeably smaller. The fix is a
-  block of per-element overrides driven by `--fsz-body`/`--fsz-meta`/
-  `--fsz-small`, right after the palette override — raising the root
-  `font-size` alone does almost nothing, because nearly every rule sets px
+  block of per-element overrides right after the palette override — raising the
+  root `font-size` alone does almost nothing, because nearly every rule sets px
   directly. If you add a new text style, add it to that list too, and make sure
   the value actually differs from the `dark` base or the override is a no-op.
+- **There are two scales, split by font, not by size.** Space Mono has a far
+  larger apparent size than EB Garamond, so prose uses `--fsz-body`/`--fsz-meta`
+  while *every* mono run (`.tagdue`, `.taskmin`, `.pcount`, `.catcount`,
+  `.projmeta`, `.legendamt`, `.gwk`, …) uses `--fsz-mono`. Mixing them is what
+  made a subtask's "due Aug 13" shout over the subtask title it annotates.
+  Pick the scale by which font the element uses.
+- `.tagdue`, `.taskmin` and `.pcount` annotate the same row and are deliberately
+  the same size in both themes — they looked untidy when they drifted apart.
 - Fantasy-only decoration (ember-glow brand text, button shimmer sweep,
   the Gantt today-line's `wardpulse`, the Focus ring's `runeglow` when
   running) lives in `.fw[data-theme="fantasy"] ...` rules near the top of

@@ -64,8 +64,13 @@ const CSS = `
 /* EB Garamond has a much smaller x-height than Inter, so the same px reads noticeably
    smaller. These bumps are per-element because nearly every rule sets px directly —
    raising the root font-size alone would change almost nothing. */
+/* Two scales, because the two font families don't compare at equal px: Space Mono
+   has a far bigger apparent size than EB Garamond, so mono meta text set to the
+   same value as prose ends up shouting over the title it annotates. Every mono
+   run uses --fsz-mono and every prose run uses the body/meta pair. Adding a new
+   text style means picking the scale by *font*, not by how small it looks. */
 .fw[data-theme="fantasy"]{
-  --fsz-body:16.5px; --fsz-meta:15.5px; --fsz-small:14.5px;
+  --fsz-body:16.5px; --fsz-meta:15.5px; --fsz-mono:13px;
 }
 .fw[data-theme="fantasy"] .tasktitle,
 .fw[data-theme="fantasy"] .legendname,
@@ -80,20 +85,32 @@ const CSS = `
 .fw[data-theme="fantasy"] select,
 .fw[data-theme="fantasy"] textarea,
 .fw[data-theme="fantasy"] .qadd,
-.fw[data-theme="fantasy"] .presetlog{font-size:var(--fsz-meta);}
 .fw[data-theme="fantasy"] .subtasktitle,
-.fw[data-theme="fantasy"] .catcount,
-.fw[data-theme="fantasy"] .legendamt,
+.fw[data-theme="fantasy"] .presetlog{font-size:var(--fsz-meta);}
+/* every mono run, so a row's annotations all match each other and sit below its title */
+.fw[data-theme="fantasy"] .tagdue,
 .fw[data-theme="fantasy"] .taskmin,
 .fw[data-theme="fantasy"] .submeta .tagdue,
 .fw[data-theme="fantasy"] .submeta .taskmin,
-.fw[data-theme="fantasy"] .aitool{font-size:var(--fsz-small);}
+.fw[data-theme="fantasy"] .tag11,
+.fw[data-theme="fantasy"] .pcount,
+.fw[data-theme="fantasy"] .catcount,
+.fw[data-theme="fantasy"] .subprogress,
+.fw[data-theme="fantasy"] .projmeta,
+.fw[data-theme="fantasy"] .legendamt,
+.fw[data-theme="fantasy"] .legendpct,
+.fw[data-theme="fantasy"] .presetamt,
+.fw[data-theme="fantasy"] .budgetamt-input,
+.fw[data-theme="fantasy"] .budgetdollar,
+.fw[data-theme="fantasy"] .gaugesub,
+.fw[data-theme="fantasy"] .todaypomos,
+.fw[data-theme="fantasy"] .aitool{font-size:var(--fsz-mono);}
 .fw[data-theme="fantasy"] .catname{font-size:15px;}
 .fw[data-theme="fantasy"] .tab{font-size:16px;}
 .fw[data-theme="fantasy"] .h2{font-size:26px;}
 .fw[data-theme="fantasy"] .projname{font-size:18.5px;}
 .fw[data-theme="fantasy"] .gbar{font-size:14px;}
-.fw[data-theme="fantasy"] .wkchip, .fw[data-theme="fantasy"] .gwk{font-size:13px;}
+.fw[data-theme="fantasy"] .wkchip, .fw[data-theme="fantasy"] .gwk{font-size:var(--fsz-mono);}
 .fw[data-theme="fantasy"] .h2::before{content:"✦ "; color:var(--amber);}
 .fw[data-theme="fantasy"] .tab.on{box-shadow:0 0 10px rgba(216,166,42,.4);}
 .fw[data-theme="fantasy"] .btn{
@@ -270,7 +287,9 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
   font-family:var(--font-mono); font-size:11px; font-weight:600;
   background:var(--pine-soft); color:var(--pine); padding:1px 6px; border-radius:4px; flex:none;
 }
-.tagdue{font-family:var(--font-mono); font-size:11px; font-weight:600; flex:none;}
+/* keep in step with .taskmin/.pcount — these three annotate the same row and
+   reading at different sizes is exactly what makes a row look untidy */
+.tagdue{font-family:var(--font-mono); font-size:12px; font-weight:600; flex:none;}
 .tagproj{font-size:12px; color:var(--muted); flex:none;}
 .taskmin{font-family:var(--font-mono); font-size:12px; color:var(--muted); flex:none; margin-left:auto;}
 .pomodots{display:flex; gap:3px; flex:none; align-items:center;}
