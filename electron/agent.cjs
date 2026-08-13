@@ -50,7 +50,10 @@ const loadSdk = () => {
   return sdkPromise;
 };
 
-const CATS = ["research", "fellowships", "classwork", "ta", "exercise", "music", "other"];
+// Categories are user-editable (data.categories), so this can't be a fixed enum.
+// list_tasks returns the current set; runPlannerTool rejects an unknown id with a
+// message naming the valid ones, and the model corrects itself from there.
+const CAT_HINT = "Category id. Call list_tasks first to see the current ones — the user can add their own.";
 
 const TOOL_NAMES = [
   "list_tasks", "create_task", "update_task", "delete_task", "add_subtasks",
@@ -83,17 +86,17 @@ function buildPlannerServer({ tool, createSdkMcpServer, z }, callTool) {
     version: "1.0.0",
     tools: [
       tool("list_tasks",
-        "Read the user's current tasks. Call this before creating, updating, or breaking down a task so you have real task ids and don't duplicate something that already exists.",
+        "Read the user's current tasks and the categories they're filed under. Call this before creating, updating, or breaking down a task so you have real task ids and real category ids, and don't duplicate something that already exists.",
         {
-          cat: z.enum(CATS).describe("Only return tasks in this category. Omit for all categories.").optional(),
+          cat: z.string().describe("Only return tasks in this category id. Omit for all categories.").optional(),
           includeCompleted: z.boolean().describe("Include finished tasks. Defaults to false.").optional(),
         },
         relay("list_tasks"), readOnly),
 
       tool("create_task",
-        "Add a new task under one of the fixed categories. Work categories are research/fellowships/classwork/ta; personal ones are exercise/music/other.",
+        "Add a new task under one of the user's categories, which are split into a Work group and a Personal group.",
         {
-          cat: z.enum(CATS),
+          cat: z.string().describe(CAT_HINT),
           title: z.string(),
           minutes: z.number().describe("Estimated length in minutes. Focus sessions are derived from this."),
           dueDate,

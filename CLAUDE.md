@@ -42,17 +42,15 @@ process — see "AI assistant".)
     labelled with the date each week starts (`colLabel`), not week numbers.
     This is unrelated to the "current week" concept that used to gate
     Work/Session. See "Gantt sections" below.
-  - `WorkView` — tasks grouped under the four fixed `WORK_CATS` (Research,
-    Fellowships, Classwork, TA). No week scoping: a task persists until
-    checked off or deleted. Each category renders its own task list *and*
-    its own `AddTaskRow` — there is no single global "add task" form anymore.
-  - `PersonalView` — same `TaskRow`/`AddTaskRow` pieces as Work, grouped
-    under the three fixed `PERSONAL_CATS` (Exercise, Music, Other) the same
-    way Work groups under `WORK_CATS`.
-  - `SessionView` (was "Focus") — pomodoro timer; completing a work session
-    increments `pomoLog[today]` and optionally a task's `done` count. Its
-    task picker lists every unchecked task across Work *and* Personal (no
-    week filter).
+  - `WorkView` / `PersonalView` — both are one-line wrappers around
+    `TaskGroupView`, which renders every category in a `group` ("work" or
+    "personal"). They were near-identical copies; don't fork them again.
+    No week scoping: a task persists until checked off or deleted. Each
+    category renders its own task list *and* its own `AddTaskRow`.
+    See "Categories" below.
+  - `SessionView` (was "Focus") — pomodoro timer plus a queue of tasks to work
+    through. Completing a work session increments `pomoLog[today]` and the
+    active task's `done` count. See "Session queue" below.
   - `BudgetView` — see "Budget" below.
 - **`TaskRow`/`AddTaskRow`/`toggleTask`/`editTask`** (above `WorkView` in the
   file) are shared between `WorkView` and `PersonalView` — keep task-row
@@ -68,6 +66,8 @@ process — see "AI assistant".)
 data = {
   settings: { work, short, long },       // pomodoro minutes
   pomoLog:  { "YYYY-MM-DD": count },      // completed work sessions per day
+  sessionQueue: [taskId],                // tasks lined up in the Session tab
+  categories: [{ id, name, color, group: "work" | "personal" }],
   seededRecurring: true,                 // one-time flag, see "Recurring tasks" below
   projects: [{ id, name, color,
                 phases: [{ id, name, start, end, done }],
@@ -76,7 +76,8 @@ data = {
   tasks: [{ id, title, cat, minutes, est, done, checked, oneOnOne, dueDate,
             recurring, seedKey, completedDate, subtasks?, sectionId? }],
   budget: { monthlyIncome, categories: [{ id, name, type, budget?,
-              items: [{ id, name, amount, date }] }] },
+              items: [{ id, name, amount, date }],
+              presets?: [{ id, name, amount }] }] },
 }
 ```
 
@@ -103,6 +104,42 @@ data; nothing reads `week` anymore, and a task whose `cat` doesn't match a
 current category just won't render anywhere until deleted. There's no
 migration step for this; it wasn't worth building for a single-user local app.
 
+## Categories
+
+The sections tasks are filed under (Research, Fellowships, … Exercise, Music, …)
+**live in `data.categories`, not in code** — the user can add their own from the
+bottom of Work or Personal.
+
+- `CAT_SEED` is only the starting point. `ensureCatSeed()` copies it into
+  `data.categories` once, same one-time pattern as `ensureBudgetSeed`. **Never
+  read `CAT_SEED` directly** outside seeding — use `allCats(data)` or
+  `catsIn(data, group)`, or a user-made category will silently not exist as far
+  as your code is concerned.
+- `catColorFor(cats, catId)` takes the *list*, not `data`, because
+  `DeadlinesGantt` only receives tasks. Callers pass `allCats(data)`.
+- New ids are slugified from the name (`"LomL Dev"` → `loml-dev`) rather than
+  random, since the AI assistant sees and writes them. `catIdFor` appends a
+  short uid only on collision.
+- **A category can only be deleted while it holds no tasks** — the ✕ in its
+  header simply isn't rendered otherwise. Deleting one with tasks would strand
+  them: nothing renders a task whose `cat` matches no category (which is also
+  what already happens to tasks left over from the pre-redesign category names).
+- Colors cycle through `CAT_COLORS`, which are `var(--…)` tokens so they follow
+  the theme. Note this is the opposite constraint from Gantt section colors,
+  which must stay hex literals because they get an alpha suffix.
+- **Sections are reorderable by dragging their header.** `moveCat` shuffles the
+  ids within one group, then writes them back into the slots that group already
+  occupies in the flat `categories` array — so reordering Work can never disturb
+  Personal. The dragged id lives in a **ref**, not state: the drop handler reads
+  it synchronously and must not depend on a re-render having landed between
+  `dragstart` and `drop`. `dragId` state exists only to fade the dragged block.
+  Only the header carries `draggable`; making the whole block draggable fights
+  with selecting text in the add-task inputs inside it.
+- **The AI's `cat` argument is a plain `z.string()`, not an enum** — an enum
+  would freeze the category list into the tool schema at build time. Instead
+  `list_tasks` returns the current categories alongside the tasks, and
+  `runPlannerTool` rejects an unknown id with a message naming the valid ones.
+
 ## Recurring tasks (Exercise habits)
 
 `RECURRING_SEEDS` (Stretching, 20 push-ups, 20 sit-ups, 20 pull-ups, Hand
@@ -125,6 +162,39 @@ themselves the day after they're checked off.
   a unique `key`) — don't hand-roll a one-off task with `recurring: true`
   outside that list, or it won't survive `ensureRecurringSeeds`'s dedup logic
   on a fresh install.
+
+## Session queue
+
+`SessionView` is styled after pomofocus.io: a mode-tabbed card (Pomodoro /
+Short Break / Long Break) with big digits, a START button, and a thin progress
+bar across the top of the card. **There is no timer ring anymore** — if you're
+looking for the old `.timerring` SVG, it was replaced by `.pomoprog`.
+
+- **`data.sessionQueue` is a list of task *ids*, not tasks.** The tasks live in
+  `data.tasks` as always; the queue only references them. That's what makes
+  checking a task off in Session the same edit as checking it off in Work — it
+  routes through the same `toggleTask` / `toggleAllSubtasks` helpers, fires the
+  same particle burst, and stamps `completedDate` the same way.
+- Read it as `data.sessionQueue || []` — it's optional, so existing saved data
+  needs no migration. Ids whose task was deleted elsewhere are dropped on read
+  (`.filter(Boolean)`) rather than cleaned up in storage.
+- **The active task is simply the first unchecked task in the queue** — that's
+  what "#1" above the list refers to, and what a finished work session credits.
+  `taskRef` is synced to it by an effect so a session that started under one
+  task credits whatever is active when it *ends*.
+- Clicking a queue row completes the task; the ✕ only removes it from the
+  queue and leaves the task itself alone. Completed rows stay visible (struck
+  through) so the session totals don't shrink as you work.
+- **Footer totals count the whole queue, completed rows included.** `doneEst`
+  counts a checked task's full `est` (not its `done`), so finishing a task
+  early doesn't leave the total looking unfinished. "Finish at" walks the
+  remaining sessions one at a time to add the break after each — including the
+  long one every 4th — which is most of the difference over a full day. It's
+  driven by the `now` prop, so it re-estimates as time passes.
+- The Add Task picker groups by Work (`WORK_CATS`) then Personal
+  (`PERSONAL_CATS`), skipping empty categories, and lists only unchecked tasks
+  not already queued. It stays open after each add so several can be queued in
+  a row.
 
 ## Gantt sections
 
@@ -211,9 +281,17 @@ every subtask is checked.
   which applies `fn` to the task, re-derives it, and — if that derivation
   flips `checked` from false to true — stamps `completedDate` and fires the
   same particle-burst/sound as finishing a normal task. `addSubtask`/
-  `toggleSubtask`/`delSubtask` are thin wrappers around it; add any future
-  subtask operation the same way rather than mutating `tasks` directly, or
-  the parent won't re-derive and the completion burst won't fire.
+  `toggleSubtask`/`delSubtask`/`editSubtask` are thin wrappers around it; add
+  any future subtask operation the same way rather than mutating `tasks`
+  directly, or the parent won't re-derive and the completion burst won't fire.
+- `SubtaskRow` has its own inline edit form (pencil icon) covering title,
+  minutes, and due date. Editing one re-derives the parent exactly like adding
+  one does — that's what `editSubtask` going through `updateSubtasks` buys.
+- The due-today/overdue glow is an **inset ring on the subtask row itself**, so
+  `.subtaskrow` needs horizontal padding or the highlight sits right on top of
+  the checkbox. `.submeta` wraps the "due …"/"N min" pair at one shared font
+  size and a fixed min-width, so they line up down the column instead of
+  drifting with each row's text.
 - **The parent checkbox becomes a bulk toggle once subtasks exist** —
   `TaskRow` routes its `onClick` to `onToggleAll` instead of `onToggle`,
   which (`toggleAllSubtasks`) sets every subtask to the opposite of the
@@ -255,6 +333,13 @@ differently:
   not built yet) without counting against the current month's remaining
   amount — nothing deletes old entries, the month just rolls over on its own
   once the calendar turns.
+- **Presets** (`category.presets: [{ id, name, amount }]`, `PresetBar` above
+  `BudgetView`) are the things bought over and over — a $9.74 Piada lunch.
+  Clicking one calls the same `addItem()` as the manual form, so the logged row
+  is an ordinary item: editable, deletable, and dated today. Deleting the logged
+  row leaves the preset alone and vice versa. Only offered on `"budget"`
+  categories — a fixed category's items *are* its budget, so a one-click
+  "I bought this again" makes no sense there.
 - **Free's `budget` is never read from storage** — `defaultBudget()` sets it
   to `null` as a placeholder. `BudgetView` always computes it live as
   `monthlyIncome - (sum of fixed categories) - Food's budget`, so editing
@@ -266,17 +351,16 @@ differently:
   This is plain color logic, not the due-date urgency system — don't reach
   for `taskUrgency` here.
 - **Visuals** (above `BudgetView`): `BudgetDonut` is a ring chart of the
-  whole month's split across all six categories — same stroke-dasharray/
-  stroke-dashoffset arc technique as the Focus timer ring in `SessionView`,
-  just drawing six static arcs instead of animating one. `SegmentBar` fades
-  the same category color per item to show a fixed category's internal
-  composition (e.g. Rent vs. Utilities within Housing) without needing a
-  second color per item. `BudgetGauge` is deliberately the *same* ring as
-  the Focus timer, reused for Food/Free's spent/remaining — the intent is
-  that "budget" reads as another countdown, not a bolted-on chart style.
-  There's a 6th palette color, `--teal`, added solely so Free (whose color
-  would otherwise collide with Investments' pine) gets its own hue in the
-  donut/legend.
+  whole month's split across all six categories, drawn with stroke-dasharray/
+  stroke-dashoffset arcs. `SegmentBar` fades the same category color per item
+  to show a fixed category's internal composition (e.g. Rent vs. Utilities
+  within Housing) without needing a second color per item. `BudgetGauge`
+  reuses the same arc for Food/Free's spent/remaining, so "budget" reads as a
+  countdown rather than a bolted-on chart style. (These arcs used to mirror
+  the Session timer's ring; that ring is gone, so Budget is now the only place
+  the technique appears.) There's a 6th palette color, `--teal`, added solely
+  so Free (whose color would otherwise collide with Investments' pine) gets
+  its own hue in the donut/legend.
 - **Seeding**: `defaultBudget()` (Rent $400/Utilities $200, Loans $300,
   Roth/Savings $200 each, Claude $17/Spotify $23.58/Gym $76.86, Food budget
   $400, monthly income $3000) is in `sampleData()` for fresh installs;
@@ -398,13 +482,21 @@ Mono, forest-and-tomato palette) and `fantasy` (a leather-and-candlelight
 burgundy/moss accents). The active theme is `useState` in `LordOfMyLife`,
 persisted to `localStorage` under `lordofmylife:theme` (a separate key from
 planner `data` — it's a UI preference, not synced data, and doesn't touch
-Supabase). Toggled via the header button, which reads `THEMES`/`THEME_LABEL`
-to show "switch to the other theme."
+Supabase). **Toggled by clicking the "Lord of my Life" brand** in the header —
+there's no separate theme button; `.brand` is a `<button>` styled to look like
+text, and `THEMES` maps the current theme to the one you'd get.
 
 - Applied as `data-theme={theme}` on the root `.fw` div. `:root` in `CSS`
   defines the `dark` palette as the default custom-property values;
   `.fw[data-theme="fantasy"]` overrides them, cascading to everything
   underneath since all rules consume colors/fonts via `var(...)`.
+- **Fantasy runs at larger type than `dark`.** EB Garamond has a much smaller
+  x-height than Inter, so the same px reads noticeably smaller. The fix is a
+  block of per-element overrides driven by `--fsz-body`/`--fsz-meta`/
+  `--fsz-small`, right after the palette override — raising the root
+  `font-size` alone does almost nothing, because nearly every rule sets px
+  directly. If you add a new text style, add it to that list too, and make sure
+  the value actually differs from the `dark` base or the override is a no-op.
 - Fantasy-only decoration (ember-glow brand text, button shimmer sweep,
   the Gantt today-line's `wardpulse`, the Focus ring's `runeglow` when
   running) lives in `.fw[data-theme="fantasy"] ...` rules near the top of
@@ -412,8 +504,8 @@ to show "switch to the other theme."
   scoped there rather than global — the `dark` theme should stay plain.
   All animations already respect `prefers-reduced-motion` via the existing
   global media query; don't bypass it.
-- The Focus timer ring gets a `running` class (`timerring ${running ? "running" : ""}`)
-  purely so the fantasy theme can glow while a session is active.
+- The Session timer card gets a `running` class purely so the fantasy theme can
+  glow (`runeglow`) while a session is active.
 - `sessionEmoji` (🍅 in `dark`, 🕯️ in `fantasy`) and `assistantLabel`
   ("Assistant" vs "Wizard") are computed once in `LordOfMyLife` from `theme`
   and passed down to `SessionView`/`AiPanel`. They're the only theme-conditional

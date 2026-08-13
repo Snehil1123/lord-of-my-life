@@ -38,7 +38,7 @@ const CSS = `
   --font-body:'EB Garamond',Georgia,serif;
   --font-mono:'Space Mono',monospace;
   --radius:3px;
-  font-size:16.5px;
+  font-size:18px;
   background:
     radial-gradient(ellipse 900px 500px at 10% -10%, rgba(216,166,42,.07), transparent 60%),
     radial-gradient(ellipse 700px 500px at 105% 15%, rgba(124,154,92,.07), transparent 55%),
@@ -61,6 +61,39 @@ const CSS = `
   50%{text-shadow:0 0 15px rgba(216,166,42,.6);}
 }
 .fw[data-theme="fantasy"] .h2, .fw[data-theme="fantasy"] .projname{letter-spacing:.03em;}
+/* EB Garamond has a much smaller x-height than Inter, so the same px reads noticeably
+   smaller. These bumps are per-element because nearly every rule sets px directly —
+   raising the root font-size alone would change almost nothing. */
+.fw[data-theme="fantasy"]{
+  --fsz-body:16.5px; --fsz-meta:15.5px; --fsz-small:14.5px;
+}
+.fw[data-theme="fantasy"] .tasktitle,
+.fw[data-theme="fantasy"] .legendname,
+.fw[data-theme="fantasy"] .budgetname-input,
+.fw[data-theme="fantasy"] .pickitem,
+.fw[data-theme="fantasy"] .aimsg{font-size:var(--fsz-body);}
+.fw[data-theme="fantasy"] .sub,
+.fw[data-theme="fantasy"] .emptystate,
+.fw[data-theme="fantasy"] .gaugemeta,
+.fw[data-theme="fantasy"] .btn,
+.fw[data-theme="fantasy"] input,
+.fw[data-theme="fantasy"] select,
+.fw[data-theme="fantasy"] textarea,
+.fw[data-theme="fantasy"] .qadd,
+.fw[data-theme="fantasy"] .presetlog{font-size:var(--fsz-meta);}
+.fw[data-theme="fantasy"] .subtasktitle,
+.fw[data-theme="fantasy"] .catcount,
+.fw[data-theme="fantasy"] .legendamt,
+.fw[data-theme="fantasy"] .taskmin,
+.fw[data-theme="fantasy"] .submeta .tagdue,
+.fw[data-theme="fantasy"] .submeta .taskmin,
+.fw[data-theme="fantasy"] .aitool{font-size:var(--fsz-small);}
+.fw[data-theme="fantasy"] .catname{font-size:15px;}
+.fw[data-theme="fantasy"] .tab{font-size:16px;}
+.fw[data-theme="fantasy"] .h2{font-size:26px;}
+.fw[data-theme="fantasy"] .projname{font-size:18.5px;}
+.fw[data-theme="fantasy"] .gbar{font-size:14px;}
+.fw[data-theme="fantasy"] .wkchip, .fw[data-theme="fantasy"] .gwk{font-size:13px;}
 .fw[data-theme="fantasy"] .h2::before{content:"✦ "; color:var(--amber);}
 .fw[data-theme="fantasy"] .tab.on{box-shadow:0 0 10px rgba(216,166,42,.4);}
 .fw[data-theme="fantasy"] .btn{
@@ -88,10 +121,10 @@ const CSS = `
   0%,100%{opacity:.7; box-shadow:0 0 6px 1px var(--amber);}
   50%{opacity:1; box-shadow:0 0 15px 3px var(--amber);}
 }
-.fw[data-theme="fantasy"] .timerring.running{animation:runeglow 2.6s ease-in-out infinite;}
+.fw[data-theme="fantasy"] .pomocard.running{animation:runeglow 2.6s ease-in-out infinite;}
 @keyframes runeglow{
-  0%,100%{filter:drop-shadow(0 0 6px rgba(216,166,42,.3));}
-  50%{filter:drop-shadow(0 0 16px rgba(216,166,42,.65));}
+  0%,100%{box-shadow:0 0 6px rgba(216,166,42,.2);}
+  50%{box-shadow:0 0 20px 2px rgba(216,166,42,.5);}
 }
 
 *{box-sizing:border-box; margin:0;}
@@ -109,8 +142,13 @@ const CSS = `
   padding:14px 22px; border-bottom:1px solid var(--line); background:var(--card);
   position:sticky; top:0; z-index:20;
 }
-.brand{font-family:var(--font-display); font-weight:800; font-size:20px; letter-spacing:-0.02em;}
+/* the brand is the theme toggle — there's no separate button for it */
+.brand{
+  font-family:var(--font-display); font-weight:800; font-size:20px; letter-spacing:-0.02em;
+  border:none; background:none; color:var(--ink); padding:0; text-align:left;
+}
 .brand em{font-style:normal; color:var(--pine);}
+.brand:hover{filter:brightness(1.15);}
 .wkchip{
   font-family:var(--font-mono); font-size:13px; color:var(--muted);
   border:1px solid var(--line); border-radius:999px; padding:3px 10px; background:var(--paper);
@@ -189,7 +227,12 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 
 /* ---------- work / personal (shared task list) ---------- */
 .catblock{margin-top:18px;}
+.catblock.dragging{opacity:.4;}
 .cathead{display:flex; align-items:center; gap:8px; margin-bottom:8px;}
+.cathead[draggable]{cursor:grab;}
+.cathead[draggable]:active{cursor:grabbing;}
+.catgrip{color:var(--line); font-size:13px; letter-spacing:-2px; user-select:none;}
+.cathead:hover .catgrip{color:var(--muted);}
 .catdot{width:9px; height:9px; border-radius:50%;}
 .catname{font-weight:700; font-size:14px; text-transform:uppercase; letter-spacing:.06em;}
 .catcount{font-family:var(--font-mono); font-size:12.5px; color:var(--muted);}
@@ -239,33 +282,84 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .subprogress{font-family:var(--font-mono); font-size:11.5px; color:var(--muted); flex:none;}
 .subtoggle{border:none; background:none; color:var(--muted); font-size:11px; padding:2px 4px; flex:none;}
 .subtoggle:hover{color:var(--ink);}
-.subtasks{background:var(--paper); border-bottom:1px solid var(--line-soft); padding:2px 12px 6px 44px;}
-.subtaskrow{display:flex; align-items:center; gap:8px; padding:5px 0;}
+.subtasks{background:var(--paper); border-bottom:1px solid var(--line-soft); padding:4px 12px 8px 40px;}
+/* horizontal padding matters: the due-today/overdue glow is an inset ring on this
+   row, so without it the highlight sits right on top of the checkbox and text */
+.subtaskrow{display:flex; align-items:center; gap:10px; padding:6px 10px; margin:3px 0;}
 .subtaskrow.done .subtasktitle{color:var(--muted); text-decoration:line-through; text-decoration-color:var(--pine);}
 .subtaskrow.due-today{border-radius:6px; box-shadow:inset 0 0 0 1px var(--amber), 0 0 8px -3px var(--amber);}
 .subtaskrow.overdue{border-radius:6px; animation:overdueglow 1.3s ease-in-out infinite;}
-.subtasktitle{font-size:13px; flex:1; min-width:0;}
+.subtaskrow.editing{gap:8px; flex-wrap:wrap;}
+.subtasktitle{font-size:13.5px; flex:1; min-width:0;}
+/* one shared baseline for "due …" and "N min" so they line up down the column */
+.submeta{display:flex; align-items:center; gap:12px; flex:none;}
+.submeta .tagdue, .submeta .taskmin{font-size:11.5px; line-height:1; margin:0;}
+.submeta .taskmin{min-width:50px; text-align:right;}
 .check.small{width:17px; height:17px; font-size:10px; flex:none;}
 .subaddrow{padding:6px 0 2px; border-top:none; background:none;}
 
 /* ---------- focus / session ---------- */
-.focuswrap{display:flex; flex-direction:column; align-items:center; padding-top:16px;}
-.modebtns{display:flex; gap:6px; margin-bottom:22px;}
-.modebtn{border:1px solid var(--line); background:var(--card); border-radius:999px; padding:6px 16px; font-size:13.5px; font-weight:600; color:var(--muted);}
-.modebtn.on{background:var(--tomato); border-color:var(--tomato); color:#fff;}
-.timerring{position:relative; width:270px; height:270px;}
-.timertext{
-  position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+.focuswrap{max-width:480px; margin:0 auto; padding-top:8px;}
+.pomocard{
+  position:relative; overflow:hidden; border-radius:16px; padding:16px 20px 26px;
+  text-align:center; background:var(--tomato-soft); border:1px solid var(--line);
+  transition:background .45s ease;
 }
-.timerdigits{font-family:var(--font-mono); font-size:62px; font-weight:600; letter-spacing:-0.02em; font-variant-numeric:tabular-nums;}
-.timerlabel{font-size:13px; text-transform:uppercase; letter-spacing:.12em; color:var(--muted); margin-top:2px;}
-.timerctl{display:flex; gap:10px; margin-top:24px;}
-.bigbtn{border-radius:999px; padding:11px 34px; font-size:16px; font-weight:700; border:1px solid var(--line); background:var(--card);}
-.bigbtn.go{background:var(--tomato); border-color:var(--tomato); color:#fff;}
-.bigbtn.go:hover{background:#e0552f;}
-.focustask{margin-top:26px; width:100%; max-width:460px;}
-.sessrow{display:flex; gap:14px; justify-content:center; margin-top:18px; font-family:var(--font-mono); font-size:13px; color:var(--muted);}
-.durs{display:flex; gap:14px; margin-top:22px; align-items:center; color:var(--muted); font-size:13px;}
+.pomocard.brk{background:var(--pine-soft);}
+.pomoprog{position:absolute; top:0; left:0; height:3px; background:var(--tomato); transition:width .3s linear;}
+.pomocard.brk .pomoprog{background:var(--pine);}
+.pomotabs{display:inline-flex; gap:4px; margin-bottom:10px;}
+.pomotab{
+  border:none; background:none; border-radius:999px; padding:5px 14px;
+  font-size:13.5px; font-weight:600; color:var(--muted);
+}
+.pomotab:hover{color:var(--ink);}
+.pomotab.on{background:rgba(255,255,255,.13); color:var(--ink);}
+.pomodigits{
+  font-family:var(--font-mono); font-size:74px; font-weight:600; line-height:1.08;
+  letter-spacing:-0.03em; font-variant-numeric:tabular-nums;
+}
+.pomostart{
+  margin-top:12px; border:none; border-radius:10px; padding:12px 44px;
+  font-size:17px; font-weight:800; letter-spacing:.08em; text-transform:uppercase;
+  background:var(--ink); color:var(--card); box-shadow:0 5px 0 rgba(0,0,0,.28);
+}
+.pomostart:active{transform:translateY(3px); box-shadow:0 2px 0 rgba(0,0,0,.28);}
+.pomoreset{border:none; background:none; color:var(--muted); font-size:13px; margin-left:10px;}
+.pomoreset:hover{color:var(--ink);}
+.pomonow{text-align:center; margin:14px 0 4px; color:var(--muted); font-size:13.5px;}
+.pomonow strong{display:block; color:var(--ink); font-size:16px; font-weight:600; margin-top:2px;}
+.qhead{display:flex; align-items:center; gap:8px; margin:20px 0 8px; border-bottom:1px solid var(--line); padding-bottom:8px;}
+.qhead .h2{font-size:18px;}
+.qrow{
+  display:flex; align-items:center; gap:10px; padding:11px 13px; margin-bottom:8px;
+  background:var(--card); border:1px solid var(--line); border-left:5px solid var(--line);
+  border-radius:8px; position:relative; cursor:pointer;
+}
+.qrow:hover{border-color:var(--muted);}
+.qrow.active{border-left-color:var(--tomato);}
+.qrow.done .tasktitle{color:var(--muted); text-decoration:line-through; text-decoration-color:var(--pine);}
+.qrow:hover .xbtn{opacity:1;}
+.qadd{
+  width:100%; border:2px dashed var(--line); background:none; border-radius:8px;
+  padding:13px; font-size:14.5px; font-weight:600; color:var(--muted);
+}
+.qadd:hover{border-color:var(--muted); color:var(--ink);}
+.pickpanel{border:1px solid var(--line); border-radius:8px; background:var(--card); padding:8px; margin-bottom:8px; max-height:320px; overflow-y:auto;}
+.pickgroup{font-family:var(--font-display); font-weight:700; font-size:13px; text-transform:uppercase; letter-spacing:.08em; padding:8px 6px 4px;}
+.pickcat{font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; padding:6px 6px 3px;}
+.pickitem{
+  display:flex; width:100%; gap:8px; align-items:center; text-align:left;
+  border:none; background:none; border-radius:6px; padding:7px 8px; font-size:14px; color:var(--ink);
+}
+.pickitem:hover{background:var(--paper);}
+.qfoot{
+  margin-top:16px; border-top:1px solid var(--line); padding-top:14px;
+  display:flex; gap:22px; justify-content:center; flex-wrap:wrap;
+  font-size:13.5px; color:var(--muted);
+}
+.qfoot b{font-family:var(--font-mono); color:var(--ink); font-size:15px; font-weight:600;}
+.durs{display:flex; gap:14px; margin-top:20px; align-items:center; justify-content:center; color:var(--muted); font-size:13px;}
 .durs input{width:52px; text-align:center;}
 
 /* ---------- budget ---------- */
@@ -297,6 +391,17 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .gaugebig{font-size:19px; font-weight:700;}
 .gaugesub{font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-top:2px;}
 .gaugemeta{flex:1; min-width:160px; font-size:13px; color:var(--muted);}
+.presets{display:flex; flex-wrap:wrap; gap:6px; padding:6px 16px 10px;}
+.preset{display:inline-flex; align-items:center; border:1px solid var(--line); background:var(--paper); border-radius:999px;}
+.preset:hover{border-color:var(--pine);}
+.presetlog{border:none; background:none; border-radius:999px; padding:6px 4px 6px 12px; font-size:13px; font-weight:500; color:var(--ink); display:flex; gap:7px; align-items:center;}
+.presetamt{font-family:var(--font-mono); font-size:12px; color:var(--muted);}
+.preset .xbtn{padding:2px 8px 2px 2px; font-size:12px;}
+.preset:hover .xbtn{opacity:1;}
+.presetadd{border:1px dashed var(--line); background:none; border-radius:999px; padding:6px 12px; font-size:13px; color:var(--muted);}
+.presetadd:hover{border-color:var(--muted); color:var(--ink);}
+.presetform{display:flex; gap:6px; align-items:center; flex-wrap:wrap; padding:2px 16px 10px;}
+.presetform input{padding:5px 8px; font-size:13px;}
 
 /* ---------- ai assistant ---------- */
 /* The panel is fixed to the right edge and the whole app is padded out of its way,
@@ -353,8 +458,7 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 @media (max-width:640px){
   .wrap{padding:18px 12px 70px;}
   .tabs{margin-left:0; width:100%; justify-content:space-between;}
-  .timerring{width:220px; height:220px;}
-  .timerdigits{font-size:48px;}
+  .pomodigits{font-size:56px;}
 }
 @media (prefers-reduced-motion: reduce){
   .fw *{animation:none !important; transition:none !important;}
@@ -420,19 +524,29 @@ const popSound = () => tone(620, 940, 0.25);
 const chime = () => { tone(520, 520, 0.4, 0.1); setTimeout(() => tone(780, 780, 0.55, 0.1), 180); };
 
 /* ---------------- default data ---------------- */
-const WORK_CATS = [
-  { id: "research", name: "Research", color: "var(--pine)" },
-  { id: "fellowships", name: "Fellowships", color: "var(--amber)" },
-  { id: "classwork", name: "Classwork", color: "var(--slate)" },
-  { id: "ta", name: "TA", color: "var(--plum)" },
+/* Categories live in `data.categories` so the user can add their own. These are only
+   the seed values — never read them directly outside defaultCategories()/seeding.
+   Read the live list with allCats(data) / catsIn(data, group) instead. */
+const CAT_SEED = [
+  { id: "research", name: "Research", color: "var(--pine)", group: "work" },
+  { id: "fellowships", name: "Fellowships", color: "var(--amber)", group: "work" },
+  { id: "classwork", name: "Classwork", color: "var(--slate)", group: "work" },
+  { id: "ta", name: "TA", color: "var(--plum)", group: "work" },
+  { id: "exercise", name: "Exercise", color: "var(--pine)", group: "personal" },
+  { id: "music", name: "Music", color: "var(--plum)", group: "personal" },
+  { id: "other", name: "Other", color: "var(--slate)", group: "personal" },
 ];
-const PERSONAL_CATS = [
-  { id: "exercise", name: "Exercise", color: "var(--pine)" },
-  { id: "music", name: "Music", color: "var(--plum)" },
-  { id: "other", name: "Other", color: "var(--slate)" },
-];
-const ALL_CATS = [...WORK_CATS, ...PERSONAL_CATS];
-const catColorFor = (catId) => ALL_CATS.find((c) => c.id === catId)?.color || "var(--slate)";
+const CAT_COLORS = ["var(--pine)", "var(--amber)", "var(--slate)", "var(--plum)", "var(--teal)", "var(--tomato)"];
+const defaultCategories = () => CAT_SEED.map((c) => ({ ...c }));
+
+const allCats = (data) => data.categories || CAT_SEED;
+const catsIn = (data, group) => allCats(data).filter((c) => c.group === group);
+const catColorFor = (cats, catId) => cats.find((c) => c.id === catId)?.color || "var(--slate)";
+// readable ids (the AI sees them), de-duped against what's already there
+const catIdFor = (name, cats) => {
+  const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "cat";
+  return cats.some((c) => c.id === base) ? `${base}-${uid().slice(0, 4)}` : base;
+};
 const PROJ_COLORS = ["#2F5D4A", "#56688A", "#7A5474", "#B8862B", "#3E7C8A", "#8A5A3E"];
 
 // Built-in Exercise habits that reopen every day — seeded once (see ensureRecurringSeeds),
@@ -491,6 +605,10 @@ function ensureBudgetSeed(data) {
   if (data.budget) return data;
   return { ...data, budget: defaultBudget() };
 }
+function ensureCatSeed(data) {
+  if (data.categories) return data;
+  return { ...data, categories: defaultCategories() };
+}
 
 function sampleData() {
   const m0 = monday(new Date());
@@ -498,7 +616,9 @@ function sampleData() {
   return {
     settings: { work: 25, short: 5, long: 15 },
     pomoLog: {},
+    sessionQueue: [],
     seededRecurring: true,
+    categories: defaultCategories(),
     budget: defaultBudget(),
     projects: [
       {
@@ -561,7 +681,7 @@ function saveData(data) {
 // Applied to local loads AND cloud pulls — a cloud row can predate a field that was
 // added after sync already existed, so this can't just run once on initial load.
 function hydrate(d) {
-  return resetRecurringTasks(ensureBudgetSeed(ensureRecurringSeeds(d)));
+  return resetRecurringTasks(ensureCatSeed(ensureBudgetSeed(ensureRecurringSeeds(d))));
 }
 
 // Assistant panel width — a per-device UI preference like the theme, not synced data.
@@ -570,7 +690,6 @@ const AIW_MIN = 300, AIW_MAX = 860;
 
 const THEME_KEY = "lordofmylife:theme";
 const THEMES = { dark: "fantasy", fantasy: "dark" }; // maps a theme to "what toggling gives you"
-const THEME_LABEL = { dark: "📜 Fantasy", fantasy: "🌲 Modern" }; // label shows the theme you'd switch TO
 
 /* ================================================================ */
 export default function LordOfMyLife() {
@@ -633,22 +752,23 @@ export default function LordOfMyLife() {
     <div className={`fw ${aiOpen ? "aiopen" : ""}`} data-theme={theme} style={{ "--aiw": `${aiWidth}px` }}>
       <style>{CSS}</style>
       <header className="hd">
-        <div className="brand">Lord of <em>my Life</em></div>
+        <button className="brand" title={`Switch to the ${THEMES[theme]} theme`} onClick={() => setTheme(THEMES[theme])}>
+          Lord of <em>my Life</em>
+        </button>
         <span className="wkchip">{new Date().toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span>
         {todayPomos > 0 && <span className="todaypomos">{sessionEmoji} ×{todayPomos} today</span>}
         <nav className="tabs">
-          {[["gantt", "Gantt Chart"], ["work", "Work"], ["session", "Session"], ["personal", "Personal"], ["budget", "Budget"]].map(([k, label]) => (
+          {[["work", "Work"], ["personal", "Personal"], ["gantt", "Gantt Chart"], ["budget", "Budget"], ["session", "Session"]].map(([k, label]) => (
             <button key={k} className={`tab ${view === k ? "on" : ""}`} onClick={() => setView(k)}>{label}</button>
           ))}
         </nav>
-        <button className="btn ghost" title="Switch theme" onClick={() => setTheme(THEMES[theme])}>{THEME_LABEL[theme]}</button>
         {!aiOpen && <button className="btn ghost" title={`Open the ${assistantLabel.toLowerCase()}`} onClick={() => setAiOpen(true)}>✦ {assistantLabel}</button>}
         <SyncBar data={data} setData={setData} />
       </header>
       <main className="wrap">
         {view === "gantt" && <GanttView data={data} setData={setData} now={now} />}
         {view === "work" && <WorkView data={data} setData={setData} now={now} />}
-        {view === "session" && <SessionView data={data} setData={setData} sessionEmoji={sessionEmoji} />}
+        {view === "session" && <SessionView data={data} setData={setData} sessionEmoji={sessionEmoji} now={now} />}
         {view === "personal" && <PersonalView data={data} setData={setData} now={now} />}
         {view === "budget" && <BudgetView data={data} setData={setData} now={now} />}
       </main>
@@ -777,7 +897,7 @@ function GanttView({ data, setData, now }) {
         <button className="btn primary" onClick={addProject}>Add project</button>
       </div>
 
-      <DeadlinesGantt tasks={data.tasks} now={now} />
+      <DeadlinesGantt tasks={data.tasks} cats={allCats(data)} now={now} />
 
       {data.projects.length === 0 && <div className="emptystate">No projects yet — add one above to start your plan.</div>}
       {data.projects.map((p) => <ProjectGantt key={p.id} project={p} data={data} setData={setData} onDelete={() => delProject(p.id)} now={now} />)}
@@ -787,7 +907,7 @@ function GanttView({ data, setData, now }) {
 
 // Any task (Work or Personal) with a due date shows up here as a single-week marker,
 // snapped to its due week the same way ProjectGantt snaps phases.
-function DeadlinesGantt({ tasks, now }) {
+function DeadlinesGantt({ tasks, cats, now }) {
   const due = tasks.filter((t) => t.dueDate);
   if (!due.length) return null;
 
@@ -825,7 +945,7 @@ function DeadlinesGantt({ tasks, now }) {
               <div
                 key={t.id}
                 className={`gbar ${t.checked ? "done" : ""} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}
-                style={{ gridColumn: `${col} / span 1`, gridRow: idx + 2, background: catColorFor(t.cat) }}
+                style={{ gridColumn: `${col} / span 1`, gridRow: idx + 2, background: catColorFor(cats, t.cat) }}
                 title={`due ${t.dueDate}`}
               >
                 {t.checked ? "✓ " : ""}{t.title}
@@ -965,7 +1085,7 @@ function ProjectGantt({ project, data, setData, onDelete, now }) {
       rows.push(
         <div key={t.id}
           className={`gbar ${t.checked ? "done" : ""} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}
-          style={{ gridColumn: `${colOf(t.dueDate)} / span 1`, gridRow: row, background: catColorFor(t.cat) }}
+          style={{ gridColumn: `${colOf(t.dueDate)} / span 1`, gridRow: row, background: catColorFor(allCats(data), t.cat) }}
           title={`task · due ${t.dueDate}`}>
           {t.checked ? "✓ " : ""}{t.title}
         </div>
@@ -1018,7 +1138,7 @@ function ProjectGantt({ project, data, setData, onDelete, now }) {
       </div>
 
       {sections.map((sec) => (
-        <SectionEditor key={sec.id} section={sec}
+        <SectionEditor key={sec.id} section={sec} cats={allCats(data)}
           onAddPhase={(p) => addSectionPhase(sec.id, p)}
           onAddTask={(t) => addSectionTask(sec.id, t)} />
       ))}
@@ -1037,9 +1157,9 @@ function ProjectGantt({ project, data, setData, onDelete, now }) {
    A section task needs a due date — it's placed on a timeline, so an undated
    one would have nowhere to sit. It's a normal task otherwise: it also shows
    up under its category in Work or Personal. */
-function SectionEditor({ section, onAddPhase, onAddTask }) {
+function SectionEditor({ section, cats, onAddPhase, onAddTask }) {
   const [ph, setPh] = useState({ name: "", start: "", end: "" });
-  const [tk, setTk] = useState({ title: "", minutes: 25, dueDate: "", cat: WORK_CATS[1].id });
+  const [tk, setTk] = useState({ title: "", minutes: 25, dueDate: "", cat: cats[0]?.id || "" });
 
   const submitPhase = () => {
     if (!ph.name.trim() || !ph.start || !ph.end || ph.end < ph.start) return;
@@ -1066,7 +1186,7 @@ function SectionEditor({ section, onAddPhase, onAddTask }) {
         <input className="field" style={{ flex: 1, minWidth: 140 }} placeholder="Task name"
           value={tk.title} onChange={(e) => setTk({ ...tk, title: e.target.value })} onKeyDown={(e) => e.key === "Enter" && submitTask()} />
         <select className="field" value={tk.cat} onChange={(e) => setTk({ ...tk, cat: e.target.value })}>
-          {ALL_CATS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
         <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}>
           <input type="number" min="5" step="5" className="field" style={{ width: 58 }} value={tk.minutes} onChange={(e) => setTk({ ...tk, minutes: e.target.value })} /> min
@@ -1078,7 +1198,7 @@ function SectionEditor({ section, onAddPhase, onAddTask }) {
   );
 }
 
-function TaskRow({ t, burstId, onToggle, onToggleAll, onDelete, onEdit, onAddSubtask, onToggleSubtask, onDeleteSubtask, now, sessionMin }) {
+function TaskRow({ t, burstId, onToggle, onToggleAll, onDelete, onEdit, onAddSubtask, onToggleSubtask, onDeleteSubtask, onEditSubtask, now, sessionMin }) {
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [title, setTitle] = useState(t.title);
@@ -1163,7 +1283,8 @@ function TaskRow({ t, burstId, onToggle, onToggleAll, onDelete, onEdit, onAddSub
       {expanded && (
         <div className="subtasks">
           {(t.subtasks || []).map((s) => (
-            <SubtaskRow key={s.id} sub={s} onToggle={() => onToggleSubtask(s.id)} onDelete={() => onDeleteSubtask(s.id)} now={now} />
+            <SubtaskRow key={s.id} sub={s} onToggle={() => onToggleSubtask(s.id)} onDelete={() => onDeleteSubtask(s.id)}
+              onEdit={(patch) => onEditSubtask(s.id, patch)} now={now} />
           ))}
           <AddSubtaskRow onAdd={(title2, minutes2, dueDate2) => onAddSubtask(title2, minutes2, dueDate2)} />
         </div>
@@ -1241,6 +1362,12 @@ const delSubtask = (data, setData, taskId, subId, setBurst) => updateSubtasks(
   (t) => ({ ...t, subtasks: t.subtasks.filter((s) => s.id !== subId) }),
   setBurst,
 );
+// editing a subtask's minutes/due date re-derives the parent's totals, same as adding one
+const editSubtask = (data, setData, taskId, subId, patch, setBurst) => updateSubtasks(
+  data, setData, taskId,
+  (t) => ({ ...t, subtasks: t.subtasks.map((s) => (s.id === subId ? { ...s, ...patch } : s)) }),
+  setBurst,
+);
 // clicking the parent checkbox on a task with subtasks checks/unchecks all of them at once
 const toggleAllSubtasks = (data, setData, taskId, setBurst) => {
   const task = data.tasks.find((t) => t.id === taskId);
@@ -1248,18 +1375,54 @@ const toggleAllSubtasks = (data, setData, taskId, setBurst) => {
   updateSubtasks(data, setData, taskId, (t) => ({ ...t, subtasks: t.subtasks.map((s) => ({ ...s, checked: target })) }), setBurst);
 };
 
-function SubtaskRow({ sub, onToggle, onDelete, now }) {
+function SubtaskRow({ sub, onToggle, onDelete, onEdit, now }) {
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(sub.title);
+  const [minutes, setMinutes] = useState(sub.minutes);
+  const [dueDate, setDueDate] = useState(sub.dueDate || "");
   const urgency = taskUrgency(sub, now);
+
+  const startEdit = () => {
+    setTitle(sub.title); setMinutes(sub.minutes); setDueDate(sub.dueDate || "");
+    setEditing(true);
+  };
+  const commit = () => {
+    if (!title.trim()) return;
+    onEdit({ title: title.trim(), minutes: Math.max(5, +minutes || 25), dueDate: dueDate || null });
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="subtaskrow editing">
+        <input className="field" style={{ flex: 1, minWidth: 110 }} autoFocus value={title}
+          onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && commit()} />
+        <label style={{ fontSize: 12, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}>
+          <input type="number" min="5" step="5" className="field" style={{ width: 56 }} value={minutes}
+            onChange={(e) => setMinutes(e.target.value)} onKeyDown={(e) => e.key === "Enter" && commit()} /> min
+        </label>
+        <label style={{ fontSize: 12, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}>
+          due <input type="date" className="field" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+        </label>
+        <button className="btn primary" onClick={commit}>Save</button>
+        <button className="btn ghost" onClick={() => setEditing(false)}>Cancel</button>
+      </div>
+    );
+  }
+
   return (
     <div className={`subtaskrow ${sub.checked ? "done" : ""} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}>
       <button className={`check small ${sub.checked ? "on" : ""}`} aria-label={sub.checked ? "Mark not done" : "Mark done"} onClick={onToggle}>✓</button>
       <span className="subtasktitle">{sub.title}</span>
-      {sub.dueDate && (
-        <span className="tagdue" style={{ color: urgency === "overdue" ? "var(--tomato)" : urgency === "due-today" ? "var(--amber)" : "var(--muted)" }}>
-          due {fmtDue(sub.dueDate)}
-        </span>
-      )}
-      <span className="taskmin">{sub.minutes} min</span>
+      <span className="submeta">
+        {sub.dueDate && (
+          <span className="tagdue" style={{ color: urgency === "overdue" ? "var(--tomato)" : urgency === "due-today" ? "var(--amber)" : "var(--muted)" }}>
+            due {fmtDue(sub.dueDate)}
+          </span>
+        )}
+        <span className="taskmin">{sub.minutes} min</span>
+      </span>
+      <button className="xbtn" onClick={startEdit} title="Edit subtask">✎</button>
       <button className="xbtn" onClick={onDelete} title="Delete subtask">✕</button>
     </div>
   );
@@ -1321,23 +1484,61 @@ function AddTaskRow({ onAdd }) {
   );
 }
 
-/* ================= WORK ================= */
-function WorkView({ data, setData, now }) {
+/* ================= WORK / PERSONAL =================
+   Both are the same view over a different `group` of categories, so they share
+   one body. Categories come from data.categories, so the sections here are
+   whatever the user has made rather than a fixed list. */
+function TaskGroupView({ data, setData, now, group, title, blurb }) {
   const [burst, setBurst] = useState(null); // task id currently bursting
+  const [newCat, setNewCat] = useState("");
+  // the dragged id lives in a ref, not state: the drop handler needs it synchronously
+  // and must not depend on a re-render having landed between dragstart and drop
+  const dragRef = useRef(null);
+  const [dragId, setDragId] = useState(null); // mirror, purely for the drag styling
 
-  const tasks = data.tasks.filter((t) => WORK_CATS.some((c) => c.id === t.cat));
+  const cats = catsIn(data, group);
+  const tasks = data.tasks.filter((t) => cats.some((c) => c.id === t.cat));
 
-  const addTask = (catId, title, minutes, oneOnOne, dueDate) => {
+  const addTask = (catId, title2, minutes, oneOnOne, dueDate) => {
     const est = estFor(minutes, data.settings.work);
-    setData({ ...data, tasks: [...data.tasks, { id: uid(), title, cat: catId, minutes, est, done: 0, checked: false, oneOnOne, dueDate }] });
+    setData({ ...data, tasks: [...data.tasks, { id: uid(), title: title2, cat: catId, minutes, est, done: 0, checked: false, oneOnOne, dueDate }] });
   };
   const toggle = (t) => toggleTask(data, setData, t, setBurst);
   const delTask = (id) => setData({ ...data, tasks: data.tasks.filter((x) => x.id !== id) });
   const edit = (id, patch) => editTask(data, setData, id, patch);
   const toggleAll = (id) => toggleAllSubtasks(data, setData, id, setBurst);
-  const addSub = (id, title, minutes, dueDate) => addSubtask(data, setData, id, title, minutes, dueDate, setBurst);
+  const addSub = (id, t2, minutes, dueDate) => addSubtask(data, setData, id, t2, minutes, dueDate, setBurst);
   const toggleSub = (id, subId) => toggleSubtask(data, setData, id, subId, setBurst);
   const delSub = (id, subId) => delSubtask(data, setData, id, subId, setBurst);
+  const editSub = (id, subId, patch) => editSubtask(data, setData, id, subId, patch, setBurst);
+
+  const addCat = () => {
+    const name = newCat.trim();
+    if (!name) return;
+    const list = allCats(data);
+    setData({
+      ...data,
+      categories: [...list, { id: catIdFor(name, list), name, color: CAT_COLORS[list.length % CAT_COLORS.length], group }],
+    });
+    setNewCat("");
+  };
+  // only ever offered for an empty section — deleting one with tasks would strand
+  // them somewhere they can never be seen again
+  const delCat = (id) => setData({ ...data, categories: allCats(data).filter((c) => c.id !== id) });
+
+  // Reorder within this group only: the group's ids are shuffled, then written back
+  // into the slots this group already occupies, so the other group stays put.
+  const moveCat = (fromId, toId) => {
+    if (!fromId || fromId === toId) return;
+    const list = allCats(data);
+    const ids = list.filter((c) => c.group === group).map((c) => c.id);
+    const from = ids.indexOf(fromId), to = ids.indexOf(toId);
+    if (from < 0 || to < 0) return;
+    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    const byId = Object.fromEntries(list.map((c) => [c.id, c]));
+    let i = 0;
+    setData({ ...data, categories: list.map((c) => (c.group === group ? byId[ids[i++]] : c)) });
+  };
 
   const doneCt = tasks.filter((t) => t.checked).length;
 
@@ -1345,95 +1546,66 @@ function WorkView({ data, setData, now }) {
     <div>
       <div style={{ display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 220 }}>
-          <div className="h2">Work</div>
-          <div className="sub">Research, fellowships, classwork, and TA duties. Add a task under any section, give it a length in minutes, and an optional due date — sessions fill in automatically.</div>
+          <div className="h2">{title}</div>
+          <div className="sub">{blurb}</div>
         </div>
         <span className="catcount">{doneCt}/{tasks.length} done</span>
       </div>
 
-      {WORK_CATS.map((c) => {
+      {cats.map((c) => {
         const list = tasks.filter((t) => t.cat === c.id);
         return (
-          <div className="catblock" key={c.id}>
-            <div className="cathead">
+          <div className={`catblock ${dragId === c.id ? "dragging" : ""}`} key={c.id}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => { e.preventDefault(); moveCat(dragRef.current, c.id); dragRef.current = null; setDragId(null); }}>
+            {/* only the header is the drag handle — making the whole block draggable
+                would fight with selecting text in the add-task inputs inside it */}
+            <div className="cathead phaserow" draggable
+              onDragStart={(e) => { dragRef.current = c.id; setDragId(c.id); e.dataTransfer.effectAllowed = "move"; }}
+              onDragEnd={() => { dragRef.current = null; setDragId(null); }}
+              title="Drag to reorder this section">
+              <span className="catgrip">⠿</span>
               <span className="catdot" style={{ background: c.color }} />
               <span className="catname" style={{ color: c.color }}>{c.name}</span>
               <span className="catcount">{list.filter((t) => t.checked).length}/{list.length}</span>
+              {list.length === 0 && (
+                <button className="xbtn" style={{ marginLeft: "auto" }} title={`Delete the ${c.name} section`}
+                  onClick={() => delCat(c.id)}>✕</button>
+              )}
             </div>
             <div className="card">
               {list.map((t) => (
                 <TaskRow key={t.id} t={t} burstId={burst} onToggle={toggle} onToggleAll={() => toggleAll(t.id)}
                   onDelete={delTask} onEdit={edit} now={now} sessionMin={data.settings.work}
-                  onAddSubtask={(title, minutes, dueDate) => addSub(t.id, title, minutes, dueDate)}
+                  onAddSubtask={(t2, minutes, dueDate) => addSub(t.id, t2, minutes, dueDate)}
                   onToggleSubtask={(subId) => toggleSub(t.id, subId)}
-                  onDeleteSubtask={(subId) => delSub(t.id, subId)} />
+                  onDeleteSubtask={(subId) => delSub(t.id, subId)}
+                  onEditSubtask={(subId, patch) => editSub(t.id, subId, patch)} />
               ))}
               {list.length === 0 && <div className="emptystate" style={{ padding: "14px 16px" }}>No tasks yet.</div>}
-              <AddTaskRow onAdd={(title, minutes, oneOnOne, dueDate) => addTask(c.id, title, minutes, oneOnOne, dueDate)} />
+              <AddTaskRow onAdd={(t2, minutes, oneOnOne, dueDate) => addTask(c.id, t2, minutes, oneOnOne, dueDate)} />
             </div>
           </div>
         );
       })}
-    </div>
-  );
-}
 
-/* ================= PERSONAL ================= */
-function PersonalView({ data, setData, now }) {
-  const [burst, setBurst] = useState(null);
-
-  const tasks = data.tasks.filter((t) => PERSONAL_CATS.some((c) => c.id === t.cat));
-
-  const addTask = (catId, title, minutes, oneOnOne, dueDate) => {
-    const est = estFor(minutes, data.settings.work);
-    setData({ ...data, tasks: [...data.tasks, { id: uid(), title, cat: catId, minutes, est, done: 0, checked: false, oneOnOne, dueDate }] });
-  };
-  const toggle = (t) => toggleTask(data, setData, t, setBurst);
-  const delTask = (id) => setData({ ...data, tasks: data.tasks.filter((x) => x.id !== id) });
-  const edit = (id, patch) => editTask(data, setData, id, patch);
-  const toggleAll = (id) => toggleAllSubtasks(data, setData, id, setBurst);
-  const addSub = (id, title, minutes, dueDate) => addSubtask(data, setData, id, title, minutes, dueDate, setBurst);
-  const toggleSub = (id, subId) => toggleSubtask(data, setData, id, subId, setBurst);
-  const delSub = (id, subId) => delSubtask(data, setData, id, subId, setBurst);
-
-  const doneCt = tasks.filter((t) => t.checked).length;
-
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <div className="h2">Personal</div>
-          <div className="sub">Exercise, music, and everything else. The Exercise habits marked "↻ daily" reopen automatically each day.</div>
-        </div>
-        <span className="catcount">{doneCt}/{tasks.length} done</span>
+      <div className="addrow" style={{ marginTop: 18, border: "1px solid var(--line)", borderRadius: "var(--radius)" }}>
+        <input className="field" style={{ flex: 1, minWidth: 160 }} placeholder={`New ${title} section (e.g. ${group === "work" ? "Quals" : "LomL Dev"})`}
+          value={newCat} onChange={(e) => setNewCat(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addCat()} />
+        <button className="btn" onClick={addCat}>Add section</button>
       </div>
-
-      {PERSONAL_CATS.map((c) => {
-        const list = tasks.filter((t) => t.cat === c.id);
-        return (
-          <div className="catblock" key={c.id}>
-            <div className="cathead">
-              <span className="catdot" style={{ background: c.color }} />
-              <span className="catname" style={{ color: c.color }}>{c.name}</span>
-              <span className="catcount">{list.filter((t) => t.checked).length}/{list.length}</span>
-            </div>
-            <div className="card">
-              {list.map((t) => (
-                <TaskRow key={t.id} t={t} burstId={burst} onToggle={toggle} onToggleAll={() => toggleAll(t.id)}
-                  onDelete={delTask} onEdit={edit} now={now} sessionMin={data.settings.work}
-                  onAddSubtask={(title, minutes, dueDate) => addSub(t.id, title, minutes, dueDate)}
-                  onToggleSubtask={(subId) => toggleSub(t.id, subId)}
-                  onDeleteSubtask={(subId) => delSub(t.id, subId)} />
-              ))}
-              {list.length === 0 && <div className="emptystate" style={{ padding: "14px 16px" }}>No tasks yet.</div>}
-              <AddTaskRow onAdd={(title, minutes, oneOnOne, dueDate) => addTask(c.id, title, minutes, oneOnOne, dueDate)} />
-            </div>
-          </div>
-        );
-      })}
     </div>
   );
 }
+
+const WorkView = (props) => (
+  <TaskGroupView {...props} group="work" title="Work"
+    blurb="Research, fellowships, classwork, and anything else you add. Give a task a length in minutes and an optional due date — sessions fill in automatically." />
+);
+const PersonalView = (props) => (
+  <TaskGroupView {...props} group="personal" title="Personal"
+    blurb={'Exercise, music, and everything else. The Exercise habits marked "↻ daily" reopen automatically each day.'} />
+);
 
 /* ================= BUDGET ================= */
 function BudgetRow({ item, onUpdate, onDelete }) {
@@ -1553,6 +1725,51 @@ function BudgetGauge({ spent, budget, color }) {
   );
 }
 
+/* Presets are the things you buy over and over (a $9.74 Piada lunch). Clicking one
+   logs a purchase for that amount today — it's a shortcut for AddBudgetItemRow, not
+   a different kind of item, so the logged row is editable/deletable like any other.
+   Only offered on "budget" categories; a fixed category's items *are* its budget. */
+function PresetBar({ presets, onLog, onDelete, onAdd }) {
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ name: "", amount: "" });
+
+  const submit = () => {
+    const amount = Math.max(0, +form.amount || 0);
+    if (!form.name.trim() || !amount) return;
+    onAdd(form.name.trim(), amount);
+    setForm({ name: "", amount: "" });
+    setAdding(false);
+  };
+
+  return (
+    <>
+      <div className="presets">
+        {presets.map((p) => (
+          <span className="preset" key={p.id}>
+            <button className="presetlog" title={`Log ${p.name} — ${fmtMoney(p.amount)}`} onClick={() => onLog(p)}>
+              {p.name}<span className="presetamt">{fmtMoney(p.amount)}</span>
+            </button>
+            <button className="xbtn" title="Remove this preset" onClick={() => onDelete(p.id)}>✕</button>
+          </span>
+        ))}
+        {!adding && <button className="presetadd" onClick={() => setAdding(true)}>+ preset</button>}
+      </div>
+      {adding && (
+        <div className="presetform">
+          <input className="field" style={{ flex: 1, minWidth: 110 }} autoFocus placeholder="Preset name (e.g. Piada)"
+            value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+            onKeyDown={(e) => e.key === "Enter" && submit()} />
+          <input className="field" style={{ width: 82 }} type="number" min="0" step="0.01" placeholder="9.74"
+            value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })}
+            onKeyDown={(e) => e.key === "Enter" && submit()} />
+          <button className="btn" onClick={submit}>Save</button>
+          <button className="btn ghost" onClick={() => { setAdding(false); setForm({ name: "", amount: "" }); }}>Cancel</button>
+        </div>
+      )}
+    </>
+  );
+}
+
 function BudgetView({ data, setData, now }) {
   const budget = data.budget;
   const thisMonth = monthKey(now);
@@ -1576,6 +1793,8 @@ function BudgetView({ data, setData, now }) {
   const addItem = (catId, name, amount) => updateCat(catId, (c) => ({ ...c, items: [...c.items, { id: uid(), name, amount, date: dateKey(now) }] }));
   const updateItem = (catId, itemId, patch) => updateCat(catId, (c) => ({ ...c, items: c.items.map((i) => (i.id === itemId ? { ...i, ...patch } : i)) }));
   const delItem = (catId, itemId) => updateCat(catId, (c) => ({ ...c, items: c.items.filter((i) => i.id !== itemId) }));
+  const addPreset = (catId, name, amount) => updateCat(catId, (c) => ({ ...c, presets: [...(c.presets || []), { id: uid(), name, amount }] }));
+  const delPreset = (catId, pid) => updateCat(catId, (c) => ({ ...c, presets: (c.presets || []).filter((p) => p.id !== pid) }));
   const setIncome = (v) => setData({ ...data, budget: { ...budget, monthlyIncome: Math.max(0, +v || 0) } });
   const setFoodBudget = (v) => updateCat("food", (c) => ({ ...c, budget: Math.max(0, +v || 0) }));
 
@@ -1632,6 +1851,10 @@ function BudgetView({ data, setData, now }) {
                     : <b style={{ color: "var(--ink)" }}>{fmtMoney(c.budget)}</b>}
                 </div>
               </div>
+              <PresetBar presets={c.presets || []}
+                onLog={(p) => addItem(c.id, p.name, p.amount)}
+                onDelete={(pid) => delPreset(c.id, pid)}
+                onAdd={(name, amount) => addPreset(c.id, name, amount)} />
               {monthItems.map((i) => <BudgetRow key={i.id} item={i} onUpdate={(patch) => updateItem(c.id, i.id, patch)} onDelete={(id) => delItem(c.id, id)} />)}
               {monthItems.length === 0 && <div className="emptystate" style={{ padding: "14px 16px" }}>Nothing logged this month yet.</div>}
               <AddBudgetItemRow onAdd={(name, amount) => addItem(c.id, name, amount)} placeholder={`Add a ${c.name.toLowerCase()} purchase…`} />
@@ -1660,20 +1883,42 @@ function BudgetView({ data, setData, now }) {
 }
 
 /* ================= SESSION ================= */
-function SessionView({ data, setData, sessionEmoji }) {
+const MODE_LABEL = { work: "Pomodoro", short: "Short Break", long: "Long Break" };
+
+/* The session queue is a list of task ids pulled in from Work/Personal. The tasks
+   themselves stay in data.tasks — the queue only references them, so checking one
+   off here is the same edit as checking it off in Work, and shows up everywhere. */
+function SessionView({ data, setData, sessionEmoji, now }) {
   const s = data.settings;
   const [mode, setMode] = useState("work"); // work | short | long
   const durFor = (m) => (m === "work" ? s.work : m === "short" ? s.short : s.long) * 60;
   const [left, setLeft] = useState(durFor("work"));
   const [running, setRunning] = useState(false);
   const [cycle, setCycle] = useState(0); // completed work sessions in current set
-  const [taskId, setTaskId] = useState("");
-  const taskRef = useRef("");
-  useEffect(() => { taskRef.current = taskId; }, [taskId]);
+  const [picking, setPicking] = useState(false);
+  const [burst, setBurst] = useState(null);
   const endRef = useRef(null);
   const tickRef = useRef(null);
 
-  const openTasks = data.tasks.filter((t) => !t.checked);
+  const queueIds = data.sessionQueue || [];
+  // stale ids (task deleted elsewhere) are dropped on read rather than migrated
+  const queue = queueIds.map((id) => data.tasks.find((t) => t.id === id)).filter(Boolean);
+  const active = queue.find((t) => !t.checked) || null;
+  const activeNo = active ? queue.indexOf(active) + 1 : 0;
+
+  // the running timer credits whatever is active when it finishes, not when it started
+  const taskRef = useRef(null);
+  useEffect(() => { taskRef.current = active?.id || null; }, [active]);
+
+  const setQueue = (ids) => setData({ ...data, sessionQueue: ids });
+  // stays open after each add — the task drops out of `available` on its own, so
+  // the list just shrinks and several can be queued without reopening the picker
+  const addToQueue = (id) => setQueue([...queueIds, id]);
+  const removeFromQueue = (id) => setQueue(queueIds.filter((x) => x !== id));
+  const completeTask = (t) => {
+    if (t.subtasks && t.subtasks.length) toggleAllSubtasks(data, setData, t.id, setBurst);
+    else toggleTask(data, setData, t, setBurst);
+  };
 
   const switchMode = (m) => { setMode(m); setRunning(false); setLeft(durFor(m)); };
 
@@ -1712,9 +1957,24 @@ function SessionView({ data, setData, sessionEmoji }) {
   const pct = 1 - left / total;
   const mm = String(Math.floor(left / 60)).padStart(2, "0");
   const ss = String(left % 60).padStart(2, "0");
-  const ringColor = mode === "work" ? "var(--tomato)" : "var(--pine)";
-  const R = 120, C = 2 * Math.PI * R;
-  const task = data.tasks.find((t) => t.id === taskId);
+
+  // Session accounting for everything in the queue, completed rows included, so
+  // the totals don't shrink as you tick things off.
+  const totalEst = queue.reduce((n, t) => n + t.est, 0);
+  const doneEst = queue.reduce((n, t) => n + (t.checked ? t.est : t.done), 0);
+  const remaining = Math.max(0, totalEst - doneEst);
+  // Walk the remaining sessions so the breaks between them are counted too,
+  // including the longer one every 4th — that's most of the difference on a long day.
+  let mins = 0;
+  for (let i = 0; i < remaining; i++) {
+    mins += s.work;
+    if (i < remaining - 1) mins += (cycle + i + 1) % 4 === 0 ? s.long : s.short;
+  }
+  const finishAt = new Date(now.getTime() + mins * 60000);
+  const fmtSpan = mins >= 60 ? `${Math.floor(mins / 60)}h${mins % 60 ? ` ${mins % 60}m` : ""}` : `${mins}m`;
+
+  const queued = new Set(queueIds);
+  const available = data.tasks.filter((t) => !t.checked && !queued.has(t.id));
 
   const setDur = (k, v) => {
     const val = Math.max(1, Math.min(120, +v || 1));
@@ -1725,48 +1985,100 @@ function SessionView({ data, setData, sessionEmoji }) {
 
   return (
     <div className="focuswrap">
-      <div className="modebtns">
-        <button className={`modebtn ${mode === "work" ? "on" : ""}`} onClick={() => switchMode("work")}>Focus</button>
-        <button className={`modebtn ${mode === "short" ? "on" : ""}`} onClick={() => switchMode("short")}>Short break</button>
-        <button className={`modebtn ${mode === "long" ? "on" : ""}`} onClick={() => switchMode("long")}>Long break</button>
-      </div>
-
-      <div className={`timerring ${running ? "running" : ""}`}>
-        <svg width="100%" height="100%" viewBox="0 0 270 270">
-          <circle cx="135" cy="135" r={R} fill="none" stroke="var(--line)" strokeWidth="10" />
-          <circle cx="135" cy="135" r={R} fill="none" stroke={ringColor} strokeWidth="10" strokeLinecap="round"
-            strokeDasharray={C} strokeDashoffset={C * (1 - pct)}
-            transform="rotate(-90 135 135)" style={{ transition: "stroke-dashoffset .3s linear" }} />
-        </svg>
-        <div className="timertext">
-          <div className="timerdigits">{mm}:{ss}</div>
-          <div className="timerlabel">{mode === "work" ? (task ? "on task" : "focus") : "break"}</div>
+      <div className={`pomocard ${mode === "work" ? "" : "brk"} ${running ? "running" : ""}`}>
+        <div className="pomoprog" style={{ width: `${pct * 100}%` }} />
+        <div className="pomotabs">
+          {["work", "short", "long"].map((m) => (
+            <button key={m} className={`pomotab ${mode === m ? "on" : ""}`} onClick={() => switchMode(m)}>{MODE_LABEL[m]}</button>
+          ))}
+        </div>
+        <div className="pomodigits">{mm}:{ss}</div>
+        <div>
+          <button className="pomostart" onClick={() => setRunning(!running)}>{running ? "Pause" : "Start"}</button>
+          {(left !== total || running) && (
+            <button className="pomoreset" onClick={() => { setRunning(false); setLeft(durFor(mode)); }}>reset</button>
+          )}
         </div>
       </div>
 
-      <div className="timerctl">
-        <button className={`bigbtn ${running ? "" : "go"}`} onClick={() => setRunning(!running)}>{running ? "Pause" : "Start"}</button>
-        <button className="bigbtn" onClick={() => { setRunning(false); setLeft(durFor(mode)); }}>Reset</button>
+      <div className="pomonow">
+        {active ? <>#{activeNo}<strong>{active.title}</strong></> : <>Nothing queued — add a task below, or just focus.</>}
       </div>
 
-      <div className="focustask">
-        <div className="sub" style={{ marginBottom: 6 }}>Working on (finished sessions fill this task's dots):</div>
-        <select className="field" style={{ width: "100%" }} value={taskId} onChange={(e) => setTaskId(e.target.value)}>
-          <option value="">— free focus, no task —</option>
-          {openTasks.map((t) => <option key={t.id} value={t.id}>{t.title} ({t.done}/{t.est} {sessionEmoji})</option>)}
-        </select>
-        {task && (
-          <div className="pomodots" style={{ marginTop: 10, marginLeft: 0 }}>
-            {Array.from({ length: Math.min(task.est, 12) }, (_, i) => <span key={i} className={`pdot ${i < task.done ? "f" : ""}`} />)}
-            <span className="pcount">{task.done}/{task.est}</span>
+      <div className="qhead">
+        <span className="h2">Tasks</span>
+        <span className="catcount" style={{ marginLeft: "auto" }}>
+          today {sessionEmoji} ×{data.pomoLog[dateKey(now)] || 0} · {cycle % 4}/4 to long break
+        </span>
+      </div>
+
+      {queue.map((t) => {
+        const isActive = active && t.id === active.id;
+        return (
+          <div key={t.id} className={`qrow ${t.checked ? "done" : ""} ${isActive ? "active" : ""}`}
+            onClick={() => completeTask(t)} title="Click to mark done">
+            <span className="checkwrap">
+              <button className={`check ${t.checked ? "on" : ""}`} aria-label={t.checked ? "Mark not done" : "Mark done"}>✓</button>
+              {burst === t.id && Array.from({ length: 8 }, (_, i) => (
+                <span key={i} className="particle" style={{
+                  background: catColorFor(allCats(data), t.cat),
+                  "--dx": `${Math.cos((i / 8) * 6.28) * 26}px`,
+                  "--dy": `${Math.sin((i / 8) * 6.28) * 26}px`,
+                }} />
+              ))}
+            </span>
+            <span className="tasktitle" style={{ flex: 1, minWidth: 0 }}>{t.title}</span>
+            <span className="pcount">{t.done}/{t.est}</span>
+            <button className="xbtn" title="Remove from session"
+              onClick={(e) => { e.stopPropagation(); removeFromQueue(t.id); }}>✕</button>
           </div>
-        )}
-      </div>
+        );
+      })}
 
-      <div className="sessrow">
-        <span>today {sessionEmoji} ×{data.pomoLog[dateKey(new Date())] || 0}</span>
-        <span>set {cycle % 4}/4 until long break</span>
-      </div>
+      {picking ? (
+        <div className="pickpanel">
+          {[["Work", catsIn(data, "work")], ["Personal", catsIn(data, "personal")]].map(([group, cats]) => {
+            const anyHere = cats.some((c) => available.some((t) => t.cat === c.id));
+            if (!anyHere) return null;
+            return (
+              <div key={group}>
+                <div className="pickgroup">{group}</div>
+                {cats.map((c) => {
+                  const list = available.filter((t) => t.cat === c.id);
+                  if (!list.length) return null;
+                  return (
+                    <div key={c.id}>
+                      <div className="pickcat" style={{ color: c.color }}>{c.name}</div>
+                      {list.map((t) => (
+                        <button key={t.id} className="pickitem" onClick={() => addToQueue(t.id)}>
+                          <span style={{ flex: 1, minWidth: 0 }}>{t.title}</span>
+                          <span className="pcount">{t.done}/{t.est}</span>
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+          {available.length === 0 && (
+            <div className="emptystate" style={{ padding: "12px 8px" }}>
+              Nothing left to add — every open task is already in this session.
+            </div>
+          )}
+          <button className="btn" style={{ marginTop: 6, width: "100%" }} onClick={() => setPicking(false)}>Done</button>
+        </div>
+      ) : (
+        <button className="qadd" onClick={() => setPicking(true)}>✛ Add Task</button>
+      )}
+
+      {queue.length > 0 && (
+        <div className="qfoot">
+          <span>Sessions <b>{doneEst}/{totalEst}</b></span>
+          {remaining > 0 && <span>Finish at <b>{finishAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</b> ({fmtSpan})</span>}
+          {remaining === 0 && <span><b>All done</b> — nothing left in this session.</span>}
+        </div>
+      )}
 
       <div className="durs">
         <label>focus <input type="number" className="field" value={s.work} onChange={(e) => setDur("work", e.target.value)} /> min</label>
@@ -1820,15 +2132,22 @@ function runPlannerTool(data, name, input) {
 
   switch (name) {
     case "list_tasks": {
-      let list = data.tasks.filter((t) => ALL_CATS.some((c) => c.id === t.cat));
+      const cats = allCats(data);
+      let list = data.tasks.filter((t) => cats.some((c) => c.id === t.cat));
       if (input.cat) list = list.filter((t) => t.cat === input.cat);
       if (!input.includeCompleted) list = list.filter((t) => !t.checked);
-      return same({ tasks: list.map(aiTask) });
+      // categories ride along: the user can add their own, so the model can't
+      // rely on a fixed set baked into its tool schema
+      return same({
+        categories: cats.map((c) => ({ id: c.id, name: c.name, group: c.group })),
+        tasks: list.map(aiTask),
+      });
     }
 
     case "create_task": {
-      if (!ALL_CATS.some((c) => c.id === input.cat)) {
-        return same({ error: `Unknown category "${input.cat}". Use one of: ${ALL_CATS.map((c) => c.id).join(", ")}.` });
+      const cats = allCats(data);
+      if (!cats.some((c) => c.id === input.cat)) {
+        return same({ error: `Unknown category "${input.cat}". Use one of: ${cats.map((c) => c.id).join(", ")}.` });
       }
       const minutes = cleanMinutes(input.minutes);
       const task = {
