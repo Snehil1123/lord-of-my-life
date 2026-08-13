@@ -3,6 +3,7 @@ import {
   supabase, signUp, signIn, signOut, getSession, onAuthChange,
   fetchCloudData, pushCloudData, subscribeToCloudData,
 } from "./sync.js";
+import { agentAvailable, onToolCall, onEvent, runQuery, cancelQuery } from "./ai.js";
 
 /* ============================================================
    LORD OF MY LIFE — one planner for the whole research pipeline
@@ -174,6 +175,17 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
   font-family:var(--font-mono); font-size:10.5px; padding:1px 5px; border-radius:4px; z-index:4;
 }
 .addrow{display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding:12px 16px; border-top:1px solid var(--line-soft); background:var(--paper);}
+/* section band sits behind the bars (which are z-index 2) but above the grid lines */
+.gband{position:relative; z-index:1; border-radius:8px; margin:1px 0;}
+.gseclabel{
+  position:relative; z-index:2; display:flex; align-items:center; gap:8px;
+  padding:0 10px; font-family:var(--font-display); font-weight:700; font-size:13.5px;
+  white-space:nowrap; overflow:hidden;
+}
+.secform{margin:0 16px 12px; border-radius:var(--radius); background:var(--paper); overflow:hidden;}
+.secform .addrow{border-top:none; padding:8px 12px; background:none;}
+.secform .addrow + .addrow{padding-top:0;}
+.secformname{font-family:var(--font-display); font-weight:700; font-size:13px; padding:9px 12px 2px; letter-spacing:.02em;}
 
 /* ---------- work / personal (shared task list) ---------- */
 .catblock{margin-top:18px;}
@@ -286,6 +298,58 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .gaugesub{font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-top:2px;}
 .gaugemeta{flex:1; min-width:160px; font-size:13px; color:var(--muted);}
 
+/* ---------- ai assistant ---------- */
+/* The panel is fixed to the right edge and the whole app is padded out of its way,
+   so the sticky header reflows with everything else instead of sliding underneath. */
+/* --aiw lives on the .fw root so the panel and the padding that clears space
+   for it can never disagree about the width the user dragged to. */
+.fw.aiopen{padding-right:var(--aiw);}
+.aipanel{
+  position:fixed; top:0; right:0; bottom:0; width:var(--aiw); z-index:40;
+  display:flex; flex-direction:column;
+  background:var(--card); border-left:1px solid var(--line);
+}
+.aigrip{
+  position:absolute; left:-3px; top:0; bottom:0; width:7px; z-index:41;
+  cursor:col-resize; background:transparent; border:none; padding:0;
+}
+.aigrip:hover, .aigrip.dragging{background:var(--pine); opacity:.5;}
+.aihead{
+  display:flex; align-items:center; gap:4px; flex:none;
+  padding:12px 10px 12px 16px; border-bottom:1px solid var(--line);
+}
+.aititle{font-family:var(--font-display); font-weight:700; font-size:16px; flex:1;}
+.aimini{padding:4px 8px; font-size:13px;}
+.aiscroll{flex:1; overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:10px;}
+.aiempty{display:flex; flex-direction:column; gap:8px; align-items:flex-start;}
+.aisuggest{
+  border:1px solid var(--line); background:var(--paper); border-radius:var(--radius);
+  padding:8px 10px; font-size:13px; color:var(--muted); text-align:left; line-height:1.35;
+  white-space:normal; max-width:100%;
+}
+.aisuggest:hover{border-color:var(--pine); color:var(--ink);}
+.aimsg{font-size:14px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere;}
+.aimsg.user{
+  background:var(--pine-soft); border:1px solid var(--line-soft);
+  border-radius:var(--radius); padding:8px 11px; align-self:flex-end; max-width:88%;
+}
+.aimsg.assistant{color:var(--ink);}
+.aitool{font-family:var(--font-mono); font-size:12px; color:var(--muted);}
+.aithinking{animation:aipulse 1.4s ease-in-out infinite;}
+@keyframes aipulse{0%,100%{opacity:.45;}50%{opacity:1;}}
+.aierror{
+  font-size:13px; color:var(--tomato); background:var(--tomato-soft);
+  border-radius:var(--radius); padding:8px 11px;
+}
+.aicompose{flex:none; display:flex; gap:8px; align-items:flex-end; padding:12px 16px; border-top:1px solid var(--line); background:var(--paper);}
+.aiinput{flex:1; min-width:0; resize:vertical; line-height:1.45; min-height:96px; background:var(--card);}
+.aiinput:disabled{opacity:.5;}
+
+@media (max-width:900px){
+  .fw.aiopen{padding-right:0;}
+  .aipanel{width:100%;}
+  .aigrip{display:none;}
+}
 @media (max-width:640px){
   .wrap{padding:18px 12px 70px;}
   .tabs{margin-left:0; width:100%; justify-content:space-between;}
@@ -301,16 +365,13 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 const DAY = 86400000;
 const monday = (d) => { const m = new Date(d); m.setHours(0,0,0,0); m.setDate(m.getDate() - ((m.getDay() + 6) % 7)); return m; };
 const addDays = (d, n) => new Date(d.getTime() + n * DAY);
-const isoWeek = (d) => {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const day = (date.getUTCDay() + 6) % 7;
-  date.setUTCDate(date.getUTCDate() - day + 3);
-  const firstThu = new Date(Date.UTC(date.getUTCFullYear(), 0, 4));
-  const fd = (firstThu.getUTCDay() + 6) % 7;
-  firstThu.setUTCDate(firstThu.getUTCDate() - fd + 3);
-  return { year: date.getUTCFullYear(), week: 1 + Math.round((date - firstThu) / (7 * DAY)) };
+// Gantt column header: the date the column's week starts on. The month is only
+// repeated when it changes, so a long timeline reads "Aug 10 / 17 / 24 / Sep 1".
+const colLabel = (d, prev) => {
+  const day = d.getDate();
+  if (prev && prev.getMonth() === d.getMonth()) return String(day);
+  return `${d.toLocaleDateString(undefined, { month: "short" })} ${day}`;
 };
-const wkLabel = (d) => `W${String(isoWeek(d).week).padStart(2, "0")}`;
 // local calendar day, not UTC — toISOString() would roll over a day early for
 // negative UTC offsets in the evening (e.g. 7pm CDT is already after midnight UTC)
 const dateKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -503,6 +564,10 @@ function hydrate(d) {
   return resetRecurringTasks(ensureBudgetSeed(ensureRecurringSeeds(d)));
 }
 
+// Assistant panel width — a per-device UI preference like the theme, not synced data.
+const AIW_KEY = "lordofmylife:aiwidth";
+const AIW_MIN = 300, AIW_MAX = 860;
+
 const THEME_KEY = "lordofmylife:theme";
 const THEMES = { dark: "fantasy", fantasy: "dark" }; // maps a theme to "what toggling gives you"
 const THEME_LABEL = { dark: "📜 Fantasy", fantasy: "🌲 Modern" }; // label shows the theme you'd switch TO
@@ -515,7 +580,16 @@ export default function LordOfMyLife() {
     try { return localStorage.getItem(THEME_KEY) || "dark"; } catch (e) { return "dark"; }
   });
   const [now, setNow] = useState(() => new Date()); // ticks so due-date glows (esp. the 11pm overdue cutoff) update live
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiWidth, setAiWidth] = useState(() => {
+    const n = Number(localStorage.getItem(AIW_KEY));
+    return n >= AIW_MIN && n <= AIW_MAX ? n : 380;
+  });
   const saveTimer = useRef(null);
+  // AiPanel's tool loop spans several awaits and several writes; reading `data` from its
+  // closure would hand the second tool call a snapshot from before the first one landed.
+  const dataRef = useRef(data);
+  useEffect(() => { dataRef.current = data; }, [data]);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 60 * 1000);
@@ -547,11 +621,16 @@ export default function LordOfMyLife() {
     };
   }, []);
 
+  useEffect(() => {
+    try { localStorage.setItem(AIW_KEY, String(aiWidth)); } catch (e) { /* storage full or unavailable */ }
+  }, [aiWidth]);
+
   const sessionEmoji = theme === "fantasy" ? "🕯️" : "🍅";
+  const assistantLabel = theme === "fantasy" ? "Wizard" : "Assistant";
   const todayPomos = data.pomoLog[dateKey(new Date())] || 0;
 
   return (
-    <div className="fw" data-theme={theme}>
+    <div className={`fw ${aiOpen ? "aiopen" : ""}`} data-theme={theme} style={{ "--aiw": `${aiWidth}px` }}>
       <style>{CSS}</style>
       <header className="hd">
         <div className="brand">Lord of <em>my Life</em></div>
@@ -563,6 +642,7 @@ export default function LordOfMyLife() {
           ))}
         </nav>
         <button className="btn ghost" title="Switch theme" onClick={() => setTheme(THEMES[theme])}>{THEME_LABEL[theme]}</button>
+        {!aiOpen && <button className="btn ghost" title={`Open the ${assistantLabel.toLowerCase()}`} onClick={() => setAiOpen(true)}>✦ {assistantLabel}</button>}
         <SyncBar data={data} setData={setData} />
       </header>
       <main className="wrap">
@@ -572,6 +652,10 @@ export default function LordOfMyLife() {
         {view === "personal" && <PersonalView data={data} setData={setData} now={now} />}
         {view === "budget" && <BudgetView data={data} setData={setData} now={now} />}
       </main>
+      {aiOpen && (
+        <AiPanel dataRef={dataRef} setData={setData} onClose={() => setAiOpen(false)}
+          label={assistantLabel} width={aiWidth} setWidth={setAiWidth} />
+      )}
     </div>
   );
 }
@@ -696,7 +780,7 @@ function GanttView({ data, setData, now }) {
       <DeadlinesGantt tasks={data.tasks} now={now} />
 
       {data.projects.length === 0 && <div className="emptystate">No projects yet — add one above to start your plan.</div>}
-      {data.projects.map((p) => <ProjectGantt key={p.id} project={p} data={data} setData={setData} onDelete={() => delProject(p.id)} />)}
+      {data.projects.map((p) => <ProjectGantt key={p.id} project={p} data={data} setData={setData} onDelete={() => delProject(p.id)} now={now} />)}
     </div>
   );
 }
@@ -733,7 +817,7 @@ function DeadlinesGantt({ tasks, now }) {
             backgroundSize: `${100 / nWeeks}% 100%`,
           }}
         >
-          {weeks.map((w, i) => <div key={i} className="gwk">{wkLabel(w)}</div>)}
+          {weeks.map((w, i) => <div key={i} className="gwk">{colLabel(w, weeks[i - 1])}</div>)}
           {due.map((t, idx) => {
             const col = Math.round((monday(new Date(t.dueDate + "T00:00:00")) - min) / (7 * DAY)) + 1;
             const urgency = taskUrgency(t, now);
@@ -760,10 +844,19 @@ function DeadlinesGantt({ tasks, now }) {
   );
 }
 
-function ProjectGantt({ project, data, setData, onDelete }) {
+/* A project can be split into named sections (e.g. NDSEG and GEM inside a
+   Fellowships project). A section owns its own phases and its own tasks, and
+   gets a tinted band across the whole timeline so it reads as one block.
+   `project.phases` stays as the ungrouped list, so projects made before
+   sections existed keep rendering exactly as they did. */
+function ProjectGantt({ project, data, setData, onDelete, now }) {
   const [ph, setPh] = useState({ name: "", start: "", end: "" });
+  const [secName, setSecName] = useState("");
 
+  const sections = project.sections || [];
   const update = (proj) => setData({ ...data, projects: data.projects.map((p) => (p.id === proj.id ? proj : p)) });
+  const sectionTasks = (secId) => data.tasks.filter((t) => t.sectionId === secId && t.dueDate);
+
   const addPhase = () => {
     if (!ph.name.trim() || !ph.start || !ph.end || ph.end < ph.start) return;
     update({ ...project, phases: [...project.phases, { id: uid(), ...ph, name: ph.name.trim(), done: false }] });
@@ -772,29 +865,121 @@ function ProjectGantt({ project, data, setData, onDelete }) {
   const togglePhase = (id) => update({ ...project, phases: project.phases.map((x) => (x.id === id ? { ...x, done: !x.done } : x)) });
   const delPhase = (id) => update({ ...project, phases: project.phases.filter((x) => x.id !== id) });
 
-  // timeline math
-  const phases = project.phases;
+  const addSection = () => {
+    if (!secName.trim()) return;
+    update({
+      ...project,
+      sections: [...sections, {
+        id: uid(), name: secName.trim(),
+        // offset so a section never lands on the project's own color
+        color: PROJ_COLORS[(sections.length + 1) % PROJ_COLORS.length],
+        phases: [],
+      }],
+    });
+    setSecName("");
+  };
+  const updateSection = (id, fn) => update({ ...project, sections: sections.map((s) => (s.id === id ? fn(s) : s)) });
+  // one setData, not two — deleting the section and unlinking its tasks are the
+  // same edit, and a second setData off the same `data` would discard the first
+  const delSection = (id) => setData({
+    ...data,
+    projects: data.projects.map((p) => (p.id === project.id ? { ...p, sections: sections.filter((s) => s.id !== id) } : p)),
+    tasks: data.tasks.map((t) => (t.sectionId === id ? { ...t, sectionId: null } : t)),
+  });
+  const addSectionPhase = (secId, p) => updateSection(secId, (s) => ({ ...s, phases: [...s.phases, { id: uid(), ...p, done: false }] }));
+  const toggleSecPhase = (secId, id) => updateSection(secId, (s) => ({ ...s, phases: s.phases.map((x) => (x.id === id ? { ...x, done: !x.done } : x)) }));
+  const delSecPhase = (secId, id) => updateSection(secId, (s) => ({ ...s, phases: s.phases.filter((x) => x.id !== id) }));
+  const addSectionTask = (secId, { title, minutes, dueDate, cat }) => {
+    const est = estFor(minutes, data.settings.work);
+    setData({ ...data, tasks: [...data.tasks, {
+      id: uid(), title, cat, minutes, est, done: 0, checked: false,
+      oneOnOne: false, dueDate, sectionId: secId,
+    }] });
+  };
+
+  // One shared timeline across ungrouped phases, every section's phases, and
+  // every section task's due date, so all of it lines up on the same columns.
+  const allPhases = [...project.phases, ...sections.flatMap((s) => s.phases)];
+  const stamps = [
+    ...allPhases.flatMap((x) => [x.start, x.end]),
+    ...sections.flatMap((s) => sectionTasks(s.id).map((t) => t.dueDate)),
+  ].map((d) => monday(new Date(d + "T00:00:00")));
+
   let grid = null;
-  if (phases.length) {
-    const starts = phases.map((x) => monday(new Date(x.start + "T00:00:00")));
-    const ends = phases.map((x) => monday(new Date(x.end + "T00:00:00")));
-    const min = new Date(Math.min(...starts));
-    const max = new Date(Math.max(...ends));
+  if (stamps.length) {
+    const min = new Date(Math.min(...stamps));
+    const max = new Date(Math.max(...stamps));
     const nWeeks = Math.round((max - min) / (7 * DAY)) + 1;
     const weeks = Array.from({ length: nWeeks }, (_, i) => addDays(min, i * 7));
-    const today = new Date();
-    const todayPct = today >= min && today < addDays(min, nWeeks * 7)
-      ? ((today - min) / (nWeeks * 7 * DAY)) * 100 : null;
+    const todayPct = now >= min && now < addDays(min, nWeeks * 7)
+      ? ((now - min) / (nWeeks * 7 * DAY)) * 100 : null;
     grid = { min, nWeeks, weeks, todayPct };
   }
-  const doneCt = phases.filter((x) => x.done).length;
+  const doneCt = allPhases.filter((x) => x.done).length;
+
+  const colOf = (iso) => Math.round((monday(new Date(iso + "T00:00:00")) - grid.min) / (7 * DAY)) + 1;
+  const phaseBar = (x, row, color, onToggle, onDel) => {
+    const col = colOf(x.start);
+    const span = Math.round((monday(new Date(x.end + "T00:00:00")) - monday(new Date(x.start + "T00:00:00"))) / (7 * DAY)) + 1;
+    return (
+      <div key={x.id} className={`gbar phaserow ${x.done ? "done" : ""}`}
+        style={{ gridColumn: `${col} / span ${span}`, gridRow: row, background: color }}
+        title={`${x.start} → ${x.end} · click to toggle done`}
+        onClick={onToggle}>
+        {x.done ? "✓ " : ""}{x.name}
+        <button className="xbtn" style={{ color: "#fff", marginLeft: "auto" }} onClick={(e2) => { e2.stopPropagation(); onDel(); }}>✕</button>
+      </div>
+    );
+  };
+
+  // Rows are laid out top to bottom with a running counter: ungrouped phases
+  // first, then each section as a band (label row + its phases + its tasks).
+  const rows = [];
+  let row = 2; // row 1 is the date header
+  project.phases.forEach((x) => {
+    rows.push(phaseBar(x, row, project.color, () => togglePhase(x.id), () => delPhase(x.id)));
+    row++;
+  });
+  sections.forEach((sec) => {
+    const tasks = sectionTasks(sec.id);
+    const span = 1 + sec.phases.length + tasks.length;
+    rows.push(
+      <div key={`band-${sec.id}`} className="gband"
+        style={{ gridColumn: "1 / -1", gridRow: `${row} / span ${span}`, background: `${sec.color}24`, boxShadow: `inset 0 0 0 1px ${sec.color}55` }} />
+    );
+    rows.push(
+      <div key={`lab-${sec.id}`} className="gseclabel phaserow" style={{ gridColumn: "1 / -1", gridRow: row }}>
+        <span className="projdot" style={{ background: sec.color }} />
+        {sec.name}
+        <span className="projmeta">{sec.phases.filter((p) => p.done).length}/{sec.phases.length} phases · {tasks.length} task{tasks.length === 1 ? "" : "s"}</span>
+        <button className="xbtn" style={{ marginLeft: "auto" }} title="Delete section" onClick={() => delSection(sec.id)}>✕</button>
+      </div>
+    );
+    row++;
+    sec.phases.forEach((x) => {
+      rows.push(phaseBar(x, row, sec.color, () => toggleSecPhase(sec.id, x.id), () => delSecPhase(sec.id, x.id)));
+      row++;
+    });
+    tasks.forEach((t) => {
+      const urgency = taskUrgency(t, now);
+      rows.push(
+        <div key={t.id}
+          className={`gbar ${t.checked ? "done" : ""} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}
+          style={{ gridColumn: `${colOf(t.dueDate)} / span 1`, gridRow: row, background: catColorFor(t.cat) }}
+          title={`task · due ${t.dueDate}`}>
+          {t.checked ? "✓ " : ""}{t.title}
+        </div>
+      );
+      row++;
+    });
+  });
 
   return (
     <section className="card proj">
       <div className="projhead">
         <span className="projdot" style={{ background: project.color }} />
         <span className="projname">{project.name}</span>
-        <span className="projmeta">{doneCt}/{phases.length} phases done</span>
+        <span className="projmeta">{doneCt}/{allPhases.length} phases done</span>
         <span style={{ marginLeft: "auto" }} className="phaserow">
           <button className="xbtn" style={{ opacity: 1 }} title="Delete project" onClick={onDelete}>✕</button>
         </span>
@@ -810,25 +995,8 @@ function ProjectGantt({ project, data, setData, onDelete }) {
               backgroundSize: `${100 / grid.nWeeks}% 100%`,
             }}
           >
-            {grid.weeks.map((w, i) => <div key={i} className="gwk">{wkLabel(w)}</div>)}
-            {phases.map((x, idx) => {
-              const s = monday(new Date(x.start + "T00:00:00"));
-              const e = monday(new Date(x.end + "T00:00:00"));
-              const col = Math.round((s - grid.min) / (7 * DAY)) + 1;
-              const span = Math.round((e - s) / (7 * DAY)) + 1;
-              return (
-                <div
-                  key={x.id}
-                  className={`gbar phaserow ${x.done ? "done" : ""}`}
-                  style={{ gridColumn: `${col} / span ${span}`, gridRow: idx + 2, background: project.color }}
-                  title={`${x.start} → ${x.end} · click to toggle done`}
-                  onClick={() => togglePhase(x.id)}
-                >
-                  {x.done ? "✓ " : ""}{x.name}
-                  <button className="xbtn" style={{ color: "#fff", marginLeft: "auto" }} onClick={(e2) => { e2.stopPropagation(); delPhase(x.id); }}>✕</button>
-                </div>
-              );
-            })}
+            {grid.weeks.map((w, i) => <div key={i} className="gwk">{colLabel(w, grid.weeks[i - 1])}</div>)}
+            {rows}
             {grid.todayPct !== null && (
               <>
                 <div className="todayline" style={{ left: `${grid.todayPct}%` }} />
@@ -838,7 +1006,7 @@ function ProjectGantt({ project, data, setData, onDelete }) {
           </div>
         </div>
       ) : (
-        <div className="emptystate" style={{ padding: "14px 16px" }}>No phases yet — add the first one below.</div>
+        <div className="emptystate" style={{ padding: "14px 16px" }}>Nothing scheduled yet — add a phase or a section below.</div>
       )}
 
       <div className="addrow">
@@ -848,11 +1016,68 @@ function ProjectGantt({ project, data, setData, onDelete }) {
         <label style={{ fontSize: 13, color: "var(--muted)" }}>to <input type="date" className="field" value={ph.end} onChange={(e) => setPh({ ...ph, end: e.target.value })} /></label>
         <button className="btn" onClick={addPhase}>Add phase</button>
       </div>
+
+      {sections.map((sec) => (
+        <SectionEditor key={sec.id} section={sec}
+          onAddPhase={(p) => addSectionPhase(sec.id, p)}
+          onAddTask={(t) => addSectionTask(sec.id, t)} />
+      ))}
+
+      <div className="addrow">
+        <input className="field" style={{ flex: 1, minWidth: 160 }} placeholder="New section (e.g. NDSEG)"
+          value={secName} onChange={(e) => setSecName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addSection()} />
+        <button className="btn" onClick={addSection}>Add section</button>
+      </div>
     </section>
   );
 }
 
 /* ================= SHARED TASK LIST PIECES ================= */
+/* The add-phase / add-task forms for one section, kept out of the grid itself.
+   A section task needs a due date — it's placed on a timeline, so an undated
+   one would have nowhere to sit. It's a normal task otherwise: it also shows
+   up under its category in Work or Personal. */
+function SectionEditor({ section, onAddPhase, onAddTask }) {
+  const [ph, setPh] = useState({ name: "", start: "", end: "" });
+  const [tk, setTk] = useState({ title: "", minutes: 25, dueDate: "", cat: WORK_CATS[1].id });
+
+  const submitPhase = () => {
+    if (!ph.name.trim() || !ph.start || !ph.end || ph.end < ph.start) return;
+    onAddPhase({ name: ph.name.trim(), start: ph.start, end: ph.end });
+    setPh({ name: "", start: "", end: "" });
+  };
+  const submitTask = () => {
+    if (!tk.title.trim() || !tk.dueDate) return;
+    onAddTask({ title: tk.title.trim(), minutes: Math.max(5, +tk.minutes || 25), dueDate: tk.dueDate, cat: tk.cat });
+    setTk({ ...tk, title: "", minutes: 25, dueDate: "" });
+  };
+
+  return (
+    <div className="secform" style={{ borderLeft: `3px solid ${section.color}` }}>
+      <div className="secformname" style={{ color: section.color }}>{section.name}</div>
+      <div className="addrow">
+        <input className="field" style={{ flex: 1, minWidth: 140 }} placeholder="Phase name"
+          value={ph.name} onChange={(e) => setPh({ ...ph, name: e.target.value })} />
+        <label style={{ fontSize: 13, color: "var(--muted)" }}>from <input type="date" className="field" value={ph.start} onChange={(e) => setPh({ ...ph, start: e.target.value })} /></label>
+        <label style={{ fontSize: 13, color: "var(--muted)" }}>to <input type="date" className="field" value={ph.end} onChange={(e) => setPh({ ...ph, end: e.target.value })} /></label>
+        <button className="btn" onClick={submitPhase}>Add phase</button>
+      </div>
+      <div className="addrow">
+        <input className="field" style={{ flex: 1, minWidth: 140 }} placeholder="Task name"
+          value={tk.title} onChange={(e) => setTk({ ...tk, title: e.target.value })} onKeyDown={(e) => e.key === "Enter" && submitTask()} />
+        <select className="field" value={tk.cat} onChange={(e) => setTk({ ...tk, cat: e.target.value })}>
+          {ALL_CATS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}>
+          <input type="number" min="5" step="5" className="field" style={{ width: 58 }} value={tk.minutes} onChange={(e) => setTk({ ...tk, minutes: e.target.value })} /> min
+        </label>
+        <label style={{ fontSize: 13, color: "var(--muted)" }}>due <input type="date" className="field" value={tk.dueDate} onChange={(e) => setTk({ ...tk, dueDate: e.target.value })} /></label>
+        <button className="btn" onClick={submitTask} disabled={!tk.title.trim() || !tk.dueDate}>Add task</button>
+      </div>
+    </div>
+  );
+}
+
 function TaskRow({ t, burstId, onToggle, onToggleAll, onDelete, onEdit, onAddSubtask, onToggleSubtask, onDeleteSubtask, now, sessionMin }) {
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -1549,5 +1774,325 @@ function SessionView({ data, setData, sessionEmoji }) {
         <label>long <input type="number" className="field" value={s.long} onChange={(e) => setDur("long", e.target.value)} /> min</label>
       </div>
     </div>
+  );
+}
+
+/* ================= AI ASSISTANT ================= */
+
+// What the model sees of a task. Deliberately not the raw object: `est` is renamed to
+// something self-explanatory, and `oneOnOne`/`seedKey`/`completedDate` are dropped so the
+// model isn't tempted to reason about internals it can't set.
+const aiTask = (t) => ({
+  id: t.id, title: t.title, cat: t.cat, minutes: t.minutes,
+  sessions: t.est, sessionsDone: t.done, checked: t.checked, dueDate: t.dueDate || null,
+  recurring: !!t.recurring,
+  subtasks: (t.subtasks || []).map((s) => ({
+    id: s.id, title: s.title, minutes: s.minutes, checked: s.checked, dueDate: s.dueDate || null,
+  })),
+});
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const cleanMinutes = (m) => Math.max(5, Math.round(+m || 25));
+const cleanDue = (d) => (typeof d === "string" && ISO_DATE.test(d) ? d : null);
+// Silently dropping a malformed phase would leave a gap the model never learns about,
+// so invalid ones come back as a rejection it can retry.
+function cleanPhases(raw) {
+  const phases = [], rejected = [];
+  for (const p of raw || []) {
+    if (!p.name || !ISO_DATE.test(p.start || "") || !ISO_DATE.test(p.end || "") || p.end < p.start) {
+      rejected.push({ phase: p, reason: "needs a name plus start/end as YYYY-MM-DD, with end on or after start" });
+      continue;
+    }
+    phases.push({ id: uid(), name: p.name, start: p.start, end: p.end, done: false });
+  }
+  return { phases, rejected };
+}
+
+/* Runs one tool call against the planner. Pure: takes `data`, returns the next `data`
+   plus the JSON result handed back to the model. Every write goes through the same
+   helpers the UI uses (estFor, deriveFromSubtasks) so an AI-made task is indistinguishable
+   from a hand-made one. Unknown ids come back as an `error` result rather than throwing —
+   the model can then re-read and correct itself instead of the whole turn dying. */
+function runPlannerTool(data, name, input) {
+  const same = (result) => ({ data, result });
+  const withTasks = (tasks, result) => ({ data: { ...data, tasks }, result });
+  const findTask = (id) => data.tasks.find((t) => t.id === id);
+
+  switch (name) {
+    case "list_tasks": {
+      let list = data.tasks.filter((t) => ALL_CATS.some((c) => c.id === t.cat));
+      if (input.cat) list = list.filter((t) => t.cat === input.cat);
+      if (!input.includeCompleted) list = list.filter((t) => !t.checked);
+      return same({ tasks: list.map(aiTask) });
+    }
+
+    case "create_task": {
+      if (!ALL_CATS.some((c) => c.id === input.cat)) {
+        return same({ error: `Unknown category "${input.cat}". Use one of: ${ALL_CATS.map((c) => c.id).join(", ")}.` });
+      }
+      const minutes = cleanMinutes(input.minutes);
+      const task = {
+        id: uid(), title: input.title, cat: input.cat, minutes,
+        est: estFor(minutes, data.settings.work), done: 0, checked: false,
+        oneOnOne: false, dueDate: cleanDue(input.dueDate),
+      };
+      return withTasks([...data.tasks, task], { created: aiTask(task) });
+    }
+
+    case "update_task": {
+      const t = findTask(input.taskId);
+      if (!t) return same({ error: `No task with id ${input.taskId}. Call list_tasks for current ids.` });
+      const hasSubs = (t.subtasks || []).length > 0;
+      let next = { ...t, title: input.title ?? t.title };
+      if (!hasSubs) {
+        if (input.minutes !== undefined) {
+          next.minutes = cleanMinutes(input.minutes);
+          next.est = estFor(next.minutes, data.settings.work);
+          next.done = Math.min(next.done, next.est);
+        }
+        if (input.dueDate !== undefined) next.dueDate = cleanDue(input.dueDate);
+      }
+      return withTasks(
+        data.tasks.map((x) => (x.id === t.id ? next : x)),
+        hasSubs && (input.minutes !== undefined || input.dueDate !== undefined)
+          ? { task: aiTask(next), note: "Only the title changed — minutes and due date are derived from this task's subtasks." }
+          : { task: aiTask(next) },
+      );
+    }
+
+    case "delete_task": {
+      const t = findTask(input.taskId);
+      if (!t) return same({ error: `No task with id ${input.taskId}.` });
+      return withTasks(data.tasks.filter((x) => x.id !== t.id), { deleted: t.title });
+    }
+
+    case "add_subtasks": {
+      const t = findTask(input.taskId);
+      if (!t) return same({ error: `No task with id ${input.taskId}. Call list_tasks for current ids.` });
+      if (!Array.isArray(input.subtasks) || !input.subtasks.length) return same({ error: "subtasks must be a non-empty array." });
+      const subs = input.subtasks.map((s) => ({
+        id: uid(), title: s.title, minutes: cleanMinutes(s.minutes), checked: false, dueDate: cleanDue(s.dueDate),
+      }));
+      const next = deriveFromSubtasks({ ...t, subtasks: [...(t.subtasks || []), ...subs] }, data.settings.work);
+      return withTasks(data.tasks.map((x) => (x.id === t.id ? next : x)), { task: aiTask(next) });
+    }
+
+    case "list_projects":
+      return same({
+        projects: data.projects.map((p) => ({
+          id: p.id, name: p.name,
+          phases: p.phases.map((ph) => ({ id: ph.id, name: ph.name, start: ph.start, end: ph.end, done: ph.done })),
+        })),
+      });
+
+    case "create_project": {
+      if (!input.name) return same({ error: "A project needs a name." });
+      const { phases, rejected } = cleanPhases(input.phases);
+      const proj = {
+        id: uid(), name: input.name,
+        color: PROJ_COLORS[data.projects.length % PROJ_COLORS.length],
+        phases,
+      };
+      return {
+        data: { ...data, projects: [...data.projects, proj] },
+        result: { project: { id: proj.id, name: proj.name, phases: proj.phases.length }, rejected },
+      };
+    }
+
+    case "add_phases": {
+      const proj = data.projects.find((p) => p.id === input.projectId);
+      if (!proj) return same({ error: `No project with id ${input.projectId}. Call list_projects for current ids.` });
+      const { phases, rejected } = cleanPhases(input.phases);
+      const next = { ...proj, phases: [...proj.phases, ...phases] };
+      return {
+        data: { ...data, projects: data.projects.map((p) => (p.id === proj.id ? next : p)) },
+        result: { project: proj.name, added: phases.length, rejected },
+      };
+    }
+
+    case "get_budget_summary": {
+      const b = data.budget;
+      const thisMonth = monthKey(new Date());
+      const spent = (c) => c.items.filter((i) => (i.date || "").slice(0, 7) === thisMonth).reduce((s, i) => s + i.amount, 0);
+      const catTotal = (c) => (c.type === "fixed" ? c.items.reduce((s, i) => s + i.amount, 0) : spent(c));
+      const fixed = b.categories.filter((c) => c.type === "fixed");
+      const fixedTotal = fixed.reduce((s, c) => s + catTotal(c), 0);
+      const food = b.categories.find((c) => c.id === "food");
+      const free = b.categories.find((c) => c.id === "free");
+      const freeBudget = b.monthlyIncome - fixedTotal - food.budget;
+      return same({
+        month: thisMonth,
+        monthlyIncome: b.monthlyIncome,
+        fixed: fixed.map((c) => ({ name: c.name, total: catTotal(c), items: c.items.map((i) => ({ name: i.name, amount: i.amount })) })),
+        food: { budget: food.budget, spent: spent(food), remaining: food.budget - spent(food) },
+        free: { budget: freeBudget, spent: spent(free), remaining: freeBudget - spent(free) },
+      });
+    }
+
+    default:
+      return same({ error: `Unknown tool "${name}".` });
+  }
+}
+
+// Label shown in the transcript for each tool call — the panel narrates what the
+// assistant is doing to the planner rather than letting it edit things invisibly.
+const TOOL_LABEL = {
+  list_tasks: "Reading your tasks",
+  create_task: "Adding a task",
+  update_task: "Updating a task",
+  delete_task: "Deleting a task",
+  add_subtasks: "Breaking it into subtasks",
+  list_projects: "Reading your projects",
+  create_project: "Creating a project",
+  add_phases: "Adding timeline phases",
+  get_budget_summary: "Reading your budget",
+};
+
+// Tool names arrive from two directions: the IPC tool call carries our bare name
+// (main.cjs relays it), while the streamed event carries the SDK's fully-qualified
+// mcp__planner__* name. Unrecognised names (the SDK's own tool-search bookkeeping)
+// render nothing rather than leaking internals into the transcript.
+function toolLabel(name) {
+  if (name === "WebSearch") return "Searching the web";
+  return TOOL_LABEL[name.replace(/^mcp__planner__/, "")] || null;
+}
+
+function AiPanel({ dataRef, setData, onClose, label, width, setWidth }) {
+  const [msgs, setMsgs] = useState([]); // rendered transcript: {role, text} | {role:"tool", label}
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const scrollRef = useRef(null);
+  // The Agent SDK owns the conversation transcript; we only carry its session id
+  // forward so each message continues the same thread instead of starting fresh.
+  const sessionRef = useRef(null);
+  const available = agentAvailable();
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [msgs, busy]);
+
+  // Registered once. The executor reads dataRef, never a closed-over `data`, so
+  // consecutive tool calls in one turn each see the previous one's writes.
+  useEffect(() => onToolCall((name, input) => {
+    const { data: next, result } = runPlannerTool(dataRef.current, name, input);
+    if (next !== dataRef.current) {
+      dataRef.current = next;
+      setData(next);
+    }
+    return result;
+  }), [dataRef, setData]);
+
+  useEffect(() => onEvent((ev) => {
+    if (ev.type === "text") setMsgs((m) => [...m, { role: "assistant", text: ev.text }]);
+    if (ev.type === "error") setError(ev.message);
+    if (ev.type === "tool") {
+      const label = toolLabel(ev.name);
+      if (label) setMsgs((m) => [...m, { role: "tool", label }]);
+    }
+  }), []);
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || busy || !available) return;
+    setInput("");
+    setError("");
+    setMsgs((m) => [...m, { role: "user", text }]);
+    setBusy(true);
+
+    const res = await runQuery({
+      prompt: text,
+      sessionId: sessionRef.current,
+      today: dateKey(new Date()),
+    });
+
+    if (res?.sessionId) sessionRef.current = res.sessionId;
+    if (res?.error) setError(res.error);
+    setBusy(false);
+  };
+
+  const clear = () => {
+    cancelQuery();
+    sessionRef.current = null; // start a genuinely new conversation, not a resumed one
+    setMsgs([]);
+    setError("");
+    setBusy(false);
+  };
+
+  // Drag the left edge to resize. Listeners go on window, not the grip, so the
+  // drag survives the pointer outrunning a fast mouse move.
+  const startDrag = (e) => {
+    e.preventDefault();
+    setDragging(true);
+    // also capped against the viewport so dragging can never squeeze the
+    // planner itself down to nothing on a small window
+    const cap = Math.min(AIW_MAX, Math.max(AIW_MIN, window.innerWidth - 380));
+    const onMove = (ev) => setWidth(Math.min(cap, Math.max(AIW_MIN, window.innerWidth - ev.clientX)));
+    const onUp = () => {
+      setDragging(false);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  return (
+    <aside className="aipanel">
+      <div className={`aigrip ${dragging ? "dragging" : ""}`} onMouseDown={startDrag}
+        title="Drag to resize" role="separator" aria-orientation="vertical" />
+      <div className="aihead">
+        <span className="aititle">{label}</span>
+        {msgs.length > 0 && <button className="btn ghost aimini" onClick={clear}>Clear</button>}
+        <button className="btn ghost aimini" onClick={onClose} title="Close panel">✕</button>
+      </div>
+
+      <div className="aiscroll" ref={scrollRef}>
+        {!available && (
+          <div className="aiempty">
+            <div className="sub">
+              The {label.toLowerCase()} runs through the Claude Agent SDK in the desktop app's main
+              process, so it isn't available in a browser tab. Start the app with <span className="mono">npm run electron:dev</span>,
+              or use the installed desktop app.
+            </div>
+          </div>
+        )}
+        {available && msgs.length === 0 && (
+          <div className="aiempty">
+            <div className="sub">Ask me to change the planner, or anything else.</div>
+            {[
+              "Break my NSF personal statement task into subtasks",
+              "Build a timeline for the Ford Foundation fellowship",
+              "What's left in my food budget?",
+            ].map((s) => (
+              <button key={s} className="aisuggest" onClick={() => setInput(s)}>{s}</button>
+            ))}
+          </div>
+        )}
+        {msgs.map((m, i) =>
+          m.role === "tool" ? (
+            <div className="aitool" key={i}>↳ {m.label}</div>
+          ) : (
+            <div className={`aimsg ${m.role}`} key={i}>{m.text}</div>
+          )
+        )}
+        {busy && <div className="aitool aithinking">thinking…</div>}
+        {error && <div className="aierror">{error}</div>}
+      </div>
+
+      <div className="aicompose">
+        <textarea
+          className="field aiinput" rows={5} placeholder={available ? "Ask or instruct…" : "Desktop app only"}
+          value={input} disabled={!available}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+        />
+        {busy
+          ? <button className="btn" onClick={() => { cancelQuery(); setBusy(false); }}>Stop</button>
+          : <button className="btn primary" onClick={send} disabled={!available || !input.trim()}>Send</button>}
+      </div>
+    </aside>
   );
 }
