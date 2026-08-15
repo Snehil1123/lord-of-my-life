@@ -417,6 +417,15 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 /* keep in step with .taskmin/.pcount — these three annotate the same row and
    reading at different sizes is exactly what makes a row look untidy */
 .tagdue{font-family:var(--font-mono); font-size:12px; font-weight:600; flex:none;}
+.tagsess{
+  font-family:var(--font-mono); font-size:11px; font-weight:600; flex:none;
+  background:var(--tomato-soft); color:var(--tomato); padding:1px 7px; border-radius:4px;
+}
+/* rows are drag handles for reordering; the cursor is the only affordance,
+   since a grip on every row would be a lot of furniture */
+.taskrow[draggable="true"], .qrow[draggable="true"]{cursor:grab;}
+.taskrow[draggable="true"]:active, .qrow[draggable="true"]:active{cursor:grabbing;}
+.taskrow.dragging, .qrow.dragging{opacity:.4;}
 .tagproj{font-size:12px; color:var(--muted); flex:none;}
 .taskmin{font-family:var(--font-mono); font-size:12px; color:var(--muted); flex:none; margin-left:auto;}
 .pomodots{display:flex; gap:3px; flex:none; align-items:center;}
@@ -486,6 +495,11 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .qrow.active{border-left-color:var(--tomato);}
 .qrow.done .tasktitle{color:var(--muted); text-decoration:line-through; text-decoration-color:var(--pine);}
 .qrow:hover .xbtn{opacity:1;}
+/* sits directly under its .qrow, which carries the 8px gap below itself */
+.qsubtasks{
+  background:var(--paper); border:1px solid var(--line); border-radius:8px;
+  margin:-4px 0 8px; padding:4px 12px 6px 30px;
+}
 .qadd{
   width:100%; border:2px dashed var(--line); background:none; border-radius:8px;
   padding:13px; font-size:14.5px; font-weight:600; color:var(--muted);
@@ -890,6 +904,9 @@ export default function LordOfMyLife() {
     try { localStorage.setItem(AIW_KEY, String(aiWidth)); } catch (e) { /* storage full or unavailable */ }
   }, [aiWidth]);
 
+  // held here, not in SessionView, so the countdown survives switching tabs
+  const timer = usePomodoro(data, setData, dataRef);
+
   const sessionEmoji = theme === "fantasy" ? "🕯️" : "🍅";
   const assistantLabel = theme === "fantasy" ? "Wizard" : "Assistant";
   const todayPomos = data.pomoLog[dateKey(new Date())] || 0;
@@ -914,9 +931,9 @@ export default function LordOfMyLife() {
       </header>
       <main className="wrap">
         {view === "gantt" && <GanttView data={data} setData={setData} now={now} />}
-        {view === "work" && <WorkView data={data} setData={setData} now={now} />}
-        {view === "session" && <SessionView data={data} setData={setData} sessionEmoji={sessionEmoji} now={now} />}
-        {view === "personal" && <PersonalView data={data} setData={setData} now={now} />}
+        {view === "work" && <WorkView data={data} setData={setData} now={now} sessionEmoji={sessionEmoji} />}
+        {view === "session" && <SessionView data={data} setData={setData} sessionEmoji={sessionEmoji} now={now} timer={timer} />}
+        {view === "personal" && <PersonalView data={data} setData={setData} now={now} sessionEmoji={sessionEmoji} />}
         {view === "budget" && <BudgetView data={data} setData={setData} now={now} />}
       </main>
       {aiOpen && (
@@ -1387,7 +1404,7 @@ function SectionEditor({ section, cats, onAddPhase, onAddTask }) {
   );
 }
 
-function TaskRow({ t, burst, onToggle, onToggleAll, onDelete, onEdit, onAddSubtask, onToggleSubtask, onDeleteSubtask, onEditSubtask, now, sessionMin }) {
+function TaskRow({ t, burst, onToggle, onToggleAll, onDelete, onEdit, onAddSubtask, onToggleSubtask, onDeleteSubtask, onEditSubtask, now, sessionMin, inSession, sessionEmoji, dragging, onDragStart, onDragEnd, onDropOn }) {
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [title, setTitle] = useState(t.title);
@@ -1434,7 +1451,13 @@ function TaskRow({ t, burst, onToggle, onToggleAll, onDelete, onEdit, onAddSubta
 
   return (
     <>
-      <div className={`taskrow ${t.checked ? "done" : ""} ${burstClass(burst, t.id)} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}>
+      <div className={`taskrow ${t.checked ? "done" : ""} ${burstClass(burst, t.id)} ${dragging ? "dragging" : ""} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}
+        draggable={!!onDragStart}
+        onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; onDragStart?.(); }}
+        onDragEnd={() => onDragEnd?.()}
+        onDragOver={(e) => onDropOn && e.preventDefault()}
+        onDrop={(e) => { e.preventDefault(); onDropOn?.(); }}
+        title="Drag to reorder">
         <span className="checkwrap">
           <button className={`check ${t.checked ? "on" : ""}`} aria-label={t.checked ? "Mark not done" : "Mark done"}
             onClick={() => (hasSubs ? onToggleAll() : onToggle(t))}>✓</button>
@@ -1446,6 +1469,7 @@ function TaskRow({ t, burst, onToggle, onToggleAll, onDelete, onEdit, onAddSubta
           })}
         </span>
         <span className="tasktitle">{t.title}</span>
+        {inSession && <span className="tagsess" title="Queued in the current session">{sessionEmoji} session</span>}
         {t.oneOnOne && <span className="tag11">1:1</span>}
         {t.recurring && <span className="tag11" title="Reopens tomorrow">↻ daily</span>}
         {t.dueDate && (
@@ -1696,13 +1720,16 @@ function AddTaskRow({ onAdd }) {
    Both are the same view over a different `group` of categories, so they share
    one body. Categories come from data.categories, so the sections here are
    whatever the user has made rather than a fixed list. */
-function TaskGroupView({ data, setData, now, group, title }) {
+function TaskGroupView({ data, setData, now, group, title, sessionEmoji }) {
   const [burst, setBurst] = useState(null); // task id currently bursting
   const [newCat, setNewCat] = useState("");
   // the dragged id lives in a ref, not state: the drop handler needs it synchronously
   // and must not depend on a re-render having landed between dragstart and drop
   const dragRef = useRef(null);
   const [dragId, setDragId] = useState(null); // mirror, purely for the drag styling
+  const taskDragRef = useRef(null);
+  const [taskDragId, setTaskDragId] = useState(null);
+  const queued = new Set(data.sessionQueue || []);
 
   const cats = catsIn(data, group);
   const tasks = data.tasks.filter((t) => cats.some((c) => c.id === t.cat));
@@ -1733,6 +1760,23 @@ function TaskGroupView({ data, setData, now, group, title }) {
   // only ever offered for an empty section — deleting one with tasks would strand
   // them somewhere they can never be seen again
   const delCat = (id) => setData({ ...data, categories: allCats(data).filter((c) => c.id !== id) });
+
+  // Same shuffle-and-write-back as moveCat, but over one category's slots in the
+  // flat tasks array. Dropping onto another category's row is ignored — a drag
+  // reorders, it doesn't refile.
+  const moveTask = (fromId, toId) => {
+    if (!fromId || fromId === toId) return;
+    const all = data.tasks;
+    const from = all.find((t) => t.id === fromId), to = all.find((t) => t.id === toId);
+    if (!from || !to || from.cat !== to.cat) return;
+    const ids = all.filter((t) => t.cat === from.cat).map((t) => t.id);
+    const fi = ids.indexOf(fromId), ti = ids.indexOf(toId);
+    if (fi < 0 || ti < 0) return;
+    ids.splice(ti, 0, ids.splice(fi, 1)[0]);
+    const byId = Object.fromEntries(all.map((t) => [t.id, t]));
+    let i = 0;
+    setData({ ...data, tasks: all.map((t) => (t.cat === from.cat ? byId[ids[i++]] : t)) });
+  };
 
   // Reorder within this group only: the group's ids are shuffled, then written back
   // into the slots this group already occupies, so the other group stays put.
@@ -1784,6 +1828,11 @@ function TaskGroupView({ data, setData, now, group, title }) {
               {list.map((t) => (
                 <TaskRow key={t.id} t={t} burst={burst} onToggle={toggle} onToggleAll={() => toggleAll(t.id)}
                   onDelete={delTask} onEdit={edit} now={now} sessionMin={data.settings.work}
+                  inSession={queued.has(t.id)} sessionEmoji={sessionEmoji}
+                  dragging={taskDragId === t.id}
+                  onDragStart={() => { taskDragRef.current = t.id; setTaskDragId(t.id); }}
+                  onDragEnd={() => { taskDragRef.current = null; setTaskDragId(null); }}
+                  onDropOn={() => { moveTask(taskDragRef.current, t.id); taskDragRef.current = null; setTaskDragId(null); }}
                   onAddSubtask={(t2, minutes, dueDate) => addSub(t.id, t2, minutes, dueDate)}
                   onToggleSubtask={(subId) => toggleSub(t.id, subId)}
                   onDeleteSubtask={(subId) => delSub(t.id, subId)}
@@ -2088,39 +2137,64 @@ const MODE_LABEL = { work: "Pomodoro", short: "Short Break", long: "Long Break" 
 /* The session queue is a list of task ids pulled in from Work/Personal. The tasks
    themselves stay in data.tasks — the queue only references them, so checking one
    off here is the same edit as checking it off in Work, and shows up everywhere. */
-function SessionView({ data, setData, sessionEmoji, now }) {
+/* Desktop notification when a timer runs out. Electron grants permission without
+   prompting; a browser asks the first time. Silently does nothing if blocked. */
+function notify(title, body) {
+  try {
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    new Notification(title, { body, tag: "loml-timer", renotify: true });
+  } catch (e) { /* unsupported or blocked */ }
+}
+function askNotifyPermission() {
+  try {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") Notification.requestPermission();
+  } catch (e) { /* unsupported */ }
+}
+
+/* The pomodoro clock lives above the view switcher, in LordOfMyLife, so it keeps
+   running when you leave the Session tab. Held inside SessionView it died on
+   unmount — both the state and the interval went with the component. */
+function usePomodoro(data, setData, dataRef) {
   const s = data.settings;
-  const [mode, setMode] = useState("work"); // work | short | long
   const durFor = (m) => (m === "work" ? s.work : m === "short" ? s.short : s.long) * 60;
-  const [left, setLeft] = useState(durFor("work"));
+  const [mode, setMode] = useState("work"); // work | short | long
+  const [left, setLeft] = useState(() => data.settings.work * 60);
   const [running, setRunning] = useState(false);
   const [cycle, setCycle] = useState(0); // completed work sessions in current set
-  const [picking, setPicking] = useState(false);
-  const [burst, setBurst] = useState(null);
   const endRef = useRef(null);
   const tickRef = useRef(null);
 
-  const queueIds = data.sessionQueue || [];
-  // stale ids (task deleted elsewhere) are dropped on read rather than migrated
-  const queue = queueIds.map((id) => data.tasks.find((t) => t.id === id)).filter(Boolean);
-  const active = queue.find((t) => !t.checked) || null;
-  const activeNo = active ? queue.indexOf(active) + 1 : 0;
-
-  // the running timer credits whatever is active when it finishes, not when it started
-  const taskRef = useRef(null);
-  useEffect(() => { taskRef.current = active?.id || null; }, [active]);
-
-  const setQueue = (ids) => setData({ ...data, sessionQueue: ids });
-  // stays open after each add — the task drops out of `available` on its own, so
-  // the list just shrinks and several can be queued without reopening the picker
-  const addToQueue = (id) => setQueue([...queueIds, id]);
-  const removeFromQueue = (id) => setQueue(queueIds.filter((x) => x !== id));
-  const completeTask = (t) => {
-    if (t.subtasks && t.subtasks.length) toggleAllSubtasks(data, setData, t.id, setBurst);
-    else toggleTask(data, setData, t, setBurst);
-  };
-
   const switchMode = (m) => { setMode(m); setRunning(false); setLeft(durFor(m)); };
+  const reset = () => { setRunning(false); setLeft(durFor(mode)); };
+  const start = () => { askNotifyPermission(); setRunning((r) => !r); };
+
+  const onComplete = () => {
+    setRunning(false);
+    chime();
+    if (mode === "work") {
+      // read the queue at completion time, so a session credits whatever is
+      // active when it ends rather than when it started
+      const cur = dataRef.current;
+      const queue = (cur.sessionQueue || []).map((id) => cur.tasks.find((t) => t.id === id)).filter(Boolean);
+      const active = queue.find((t) => !t.checked) || null;
+      const dk = dateKey(new Date());
+      setData((prev) => ({
+        ...prev,
+        pomoLog: { ...prev.pomoLog, [dk]: (prev.pomoLog[dk] || 0) + 1 },
+        tasks: active ? prev.tasks.map((t) => (t.id === active.id ? { ...t, done: t.done + 1 } : t)) : prev.tasks,
+      }));
+      const nextCycle = cycle + 1;
+      setCycle(nextCycle);
+      const nm = nextCycle % 4 === 0 ? "long" : "short";
+      setMode(nm); setLeft(durFor(nm));
+      notify("Focus session complete", active
+        ? `${active.title} — time for a ${nm === "long" ? "long" : "short"} break.`
+        : `Time for a ${nm === "long" ? "long" : "short"} break.`);
+    } else {
+      setMode("work"); setLeft(durFor("work"));
+      notify("Break over", "Back to it — a new focus session is ready.");
+    }
+  };
 
   useEffect(() => {
     if (!running) { clearInterval(tickRef.current); return; }
@@ -2134,23 +2208,90 @@ function SessionView({ data, setData, sessionEmoji, now }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running]);
 
-  const onComplete = () => {
-    setRunning(false);
-    chime();
-    if (mode === "work") {
-      const dk = dateKey(new Date());
-      const nextCycle = cycle + 1;
-      setCycle(nextCycle);
-      setData((prev) => ({
-        ...prev,
-        pomoLog: { ...prev.pomoLog, [dk]: (prev.pomoLog[dk] || 0) + 1 },
-        tasks: taskRef.current ? prev.tasks.map((t) => (t.id === taskRef.current ? { ...t, done: t.done + 1 } : t)) : prev.tasks,
-      }));
-      const nm = nextCycle % 4 === 0 ? "long" : "short";
-      setMode(nm); setLeft(durFor(nm));
-    } else {
-      setMode("work"); setLeft(durFor("work"));
-    }
+  return { mode, left, running, cycle, durFor, switchMode, reset, start, setLeft };
+}
+
+/* A queued task. The subtask list is a *sibling* of .qrow, not a child — the row
+   itself completes the task on click, so nesting the subtasks inside it would
+   mean checking a subtask also ticked off its parent. */
+function QueueRow({ t, data, setData, now, isActive, burst, setBurst, onComplete, onRemove, dragging, onDragStart, onDragEnd, onDropOn }) {
+  const [expanded, setExpanded] = useState(false);
+  const subs = t.subtasks || [];
+  const doneSubs = subs.filter((x) => x.checked).length;
+  const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
+
+  return (
+    <>
+      <div className={`qrow ${t.checked ? "done" : ""} ${burstClass(burst, t.id)} ${isActive ? "active" : ""} ${dragging ? "dragging" : ""}`}
+        onClick={onComplete} title="Click to mark done · drag to reorder"
+        draggable
+        onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; onDragStart?.(); }}
+        onDragEnd={() => onDragEnd?.()}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => { e.preventDefault(); onDropOn?.(); }}>
+        <span className="checkwrap">
+          <button className={`check ${t.checked ? "on" : ""}`} aria-label={t.checked ? "Mark not done" : "Mark done"}>✓</button>
+          {burst?.id === t.id && burst.kind === "done" && Array.from({ length: 8 }, (_, i) => (
+            <span key={i} className="particle" style={{
+              background: catColorFor(allCats(data), t.cat),
+              "--dx": `${Math.cos((i / 8) * 6.28) * 26}px`,
+              "--dy": `${Math.sin((i / 8) * 6.28) * 26}px`,
+            }} />
+          ))}
+        </span>
+        <span className="tasktitle" style={{ flex: 1, minWidth: 0 }}>{t.title}</span>
+        {subs.length > 0 && <span className="subprogress">{doneSubs}/{subs.length}</span>}
+        <span className="pcount">{t.done}/{t.est}</span>
+        <button className="subtoggle" title={expanded ? "Hide subtasks" : "Subtasks"}
+          onClick={stop(() => setExpanded((v) => !v))}>{expanded ? "▾" : "▸"}</button>
+        <button className="xbtn" title="Remove from session" onClick={stop(onRemove)}>✕</button>
+      </div>
+
+      {expanded && (
+        <div className="subtasks qsubtasks">
+          {subs.map((sb) => (
+            <SubtaskRow key={sb.id} sub={sb} now={now}
+              onToggle={() => toggleSubtask(data, setData, t.id, sb.id, setBurst)}
+              onDelete={() => delSubtask(data, setData, t.id, sb.id, setBurst)}
+              onEdit={(patch) => editSubtask(data, setData, t.id, sb.id, patch, setBurst)} />
+          ))}
+          <AddSubtaskRow onAdd={(title, minutes, dueDate) => addSubtask(data, setData, t.id, title, minutes, dueDate, setBurst)} />
+        </div>
+      )}
+    </>
+  );
+}
+
+function SessionView({ data, setData, sessionEmoji, now, timer }) {
+  const s = data.settings;
+  const { mode, left, running, cycle, durFor, switchMode, reset, start, setLeft } = timer;
+  const [picking, setPicking] = useState(false);
+  const [burst, setBurst] = useState(null);
+  const qDragRef = useRef(null);
+  const [qDragId, setQDragId] = useState(null);
+
+  const queueIds = data.sessionQueue || [];
+  // stale ids (task deleted elsewhere) are dropped on read rather than migrated
+  const queue = queueIds.map((id) => data.tasks.find((t) => t.id === id)).filter(Boolean);
+  const active = queue.find((t) => !t.checked) || null;
+  const activeNo = active ? queue.indexOf(active) + 1 : 0;
+
+  const setQueue = (ids) => setData({ ...data, sessionQueue: ids });
+  const addToQueue = (id) => { setQueue([...queueIds, id]); setPicking(false); };
+  const removeFromQueue = (id) => setQueue(queueIds.filter((x) => x !== id));
+  // reordering the queue also moves which task is active, since "active" is just
+  // the first unchecked one — that's the point of being able to drag them
+  const moveInQueue = (fromId, toId) => {
+    if (!fromId || fromId === toId) return;
+    const ids = [...queueIds];
+    const fi = ids.indexOf(fromId), ti = ids.indexOf(toId);
+    if (fi < 0 || ti < 0) return;
+    ids.splice(ti, 0, ids.splice(fi, 1)[0]);
+    setQueue(ids);
+  };
+  const completeTask = (t) => {
+    if (t.subtasks && t.subtasks.length) toggleAllSubtasks(data, setData, t.id, setBurst);
+    else toggleTask(data, setData, t, setBurst);
   };
 
   const total = durFor(mode);
@@ -2194,10 +2335,8 @@ function SessionView({ data, setData, sessionEmoji, now }) {
         </div>
         <div className="pomodigits">{mm}:{ss}</div>
         <div>
-          <button className="pomostart" onClick={() => setRunning(!running)}>{running ? "Pause" : "Start"}</button>
-          {(left !== total || running) && (
-            <button className="pomoreset" onClick={() => { setRunning(false); setLeft(durFor(mode)); }}>reset</button>
-          )}
+          <button className="pomostart" onClick={start}>{running ? "Pause" : "Start"}</button>
+          {(left !== total || running) && <button className="pomoreset" onClick={reset}>reset</button>}
         </div>
       </div>
 
@@ -2212,28 +2351,15 @@ function SessionView({ data, setData, sessionEmoji, now }) {
         </span>
       </div>
 
-      {queue.map((t) => {
-        const isActive = active && t.id === active.id;
-        return (
-          <div key={t.id} className={`qrow ${t.checked ? "done" : ""} ${burstClass(burst, t.id)} ${isActive ? "active" : ""}`}
-            onClick={() => completeTask(t)} title="Click to mark done">
-            <span className="checkwrap">
-              <button className={`check ${t.checked ? "on" : ""}`} aria-label={t.checked ? "Mark not done" : "Mark done"}>✓</button>
-              {burst?.id === t.id && burst.kind === "done" && Array.from({ length: 8 }, (_, i) => (
-                <span key={i} className="particle" style={{
-                  background: catColorFor(allCats(data), t.cat),
-                  "--dx": `${Math.cos((i / 8) * 6.28) * 26}px`,
-                  "--dy": `${Math.sin((i / 8) * 6.28) * 26}px`,
-                }} />
-              ))}
-            </span>
-            <span className="tasktitle" style={{ flex: 1, minWidth: 0 }}>{t.title}</span>
-            <span className="pcount">{t.done}/{t.est}</span>
-            <button className="xbtn" title="Remove from session"
-              onClick={(e) => { e.stopPropagation(); removeFromQueue(t.id); }}>✕</button>
-          </div>
-        );
-      })}
+      {queue.map((t) => (
+        <QueueRow key={t.id} t={t} data={data} setData={setData} now={now}
+          isActive={!!active && t.id === active.id} burst={burst} setBurst={setBurst}
+          onComplete={() => completeTask(t)} onRemove={() => removeFromQueue(t.id)}
+          dragging={qDragId === t.id}
+          onDragStart={() => { qDragRef.current = t.id; setQDragId(t.id); }}
+          onDragEnd={() => { qDragRef.current = null; setQDragId(null); }}
+          onDropOn={() => { moveInQueue(qDragRef.current, t.id); qDragRef.current = null; setQDragId(null); }} />
+      ))}
 
       {picking ? (
         <div className="pickpanel">

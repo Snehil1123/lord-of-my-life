@@ -127,6 +127,16 @@ bottom of Work or Personal.
 - Colors cycle through `CAT_COLORS`, which are `var(--…)` tokens so they follow
   the theme. Note this is the opposite constraint from Gantt section colors,
   which must stay hex literals because they get an alpha suffix.
+- **Tasks are reorderable by dragging the row.** `moveTask` uses the same
+  shuffle-and-write-back as `moveCat`, over one category's slots in the flat
+  `tasks` array. **Dropping onto a row in a different category is ignored** —
+  a drag reorders, it never refiles a task. The whole row is the handle rather
+  than a grip, since a grip on every task row would be a lot of furniture; the
+  `editing` branch returns before the drag props are applied, so an open edit
+  form is never draggable.
+- **A task queued in the Session tab shows a `.tagsess` pill** in Work/Personal,
+  driven by `data.sessionQueue`. `sessionEmoji` is threaded down for it, the
+  same prop the Session tab already takes.
 - **Sections are reorderable by dragging their header.** `moveCat` shuffles the
   ids within one group, then writes them back into the slots that group already
   occupies in the flat `categories` array — so reordering Work can never disturb
@@ -170,6 +180,20 @@ Short Break / Long Break) with big digits, a START button, and a thin progress
 bar across the top of the card. **There is no timer ring anymore** — if you're
 looking for the old `.timerring` SVG, it was replaced by `.pomoprog`.
 
+- **The clock itself lives in `LordOfMyLife`, not `SessionView`** — see
+  `usePomodoro`. Held inside the view, both the state and the `setInterval` died
+  the moment you switched tabs, so a running session reset itself. Anything else
+  that has to outlive a tab switch belongs up there too.
+- `onComplete` reads the queue from `dataRef` at the moment it fires, so a
+  session credits whatever task is active when it *ends*, not when it started.
+- **Timer completion posts a desktop notification** (`notify`). Electron grants
+  the permission without prompting; a browser asks, and `askNotifyPermission()`
+  is called from Start rather than on load so the prompt is tied to an action.
+  `notify` silently does nothing when permission isn't granted.
+- `QueueRow` renders its subtask list as a **sibling** of `.qrow`, never a
+  child: the row's own click completes the task, so nesting them would mean
+  ticking a subtask also ticked off its parent. Its buttons stop propagation
+  for the same reason.
 - **`data.sessionQueue` is a list of task *ids*, not tasks.** The tasks live in
   `data.tasks` as always; the queue only references them. That's what makes
   checking a task off in Session the same edit as checking it off in Work — it
@@ -182,6 +206,8 @@ looking for the old `.timerring` SVG, it was replaced by `.pomoprog`.
   what "#1" above the list refers to, and what a finished work session credits.
   `taskRef` is synced to it by an effect so a session that started under one
   task credits whatever is active when it *ends*.
+- Queue rows are draggable too (`moveInQueue`), which also changes *which task
+  is active*, since active is just the first unchecked one.
 - Clicking a queue row completes the task; the ✕ only removes it from the
   queue and leaves the task itself alone. Completed rows stay visible (struck
   through) so the session totals don't shrink as you work.
@@ -191,10 +217,9 @@ looking for the old `.timerring` SVG, it was replaced by `.pomoprog`.
   remaining sessions one at a time to add the break after each — including the
   long one every 4th — which is most of the difference over a full day. It's
   driven by the `now` prop, so it re-estimates as time passes.
-- The Add Task picker groups by Work (`WORK_CATS`) then Personal
-  (`PERSONAL_CATS`), skipping empty categories, and lists only unchecked tasks
-  not already queued. It stays open after each add so several can be queued in
-  a row.
+- The Add Task picker groups by Work then Personal (via `catsIn`), skipping
+  empty categories, and lists only unchecked tasks not already queued. It
+  closes after each add — reopening per task is the deliberate behaviour.
 
 ## Gantt sections
 
