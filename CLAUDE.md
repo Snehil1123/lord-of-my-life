@@ -127,6 +127,24 @@ bottom of Work or Personal.
 - Colors cycle through `CAT_COLORS`, which are `var(--…)` tokens so they follow
   the theme. Note this is the opposite constraint from Gantt section colors,
   which must stay hex literals because they get an alpha suffix.
+- **`dragHandlers(drag)`** (above `TaskRow`) is shared by `TaskRow` and
+  `QueueRow` and carries three things a native HTML5 drag needs to look right:
+  - an explicit `setDragImage` offset to where the cursor grabbed the row,
+    taken from a **detached opaque clone** (`makeDragImage`), never the live
+    element. Handing Chromium the real row lets the bitmap pick up whatever the
+    source is doing — the fade, and its transparent edges, since a row paints no
+    background beyond the card behind it. The clone must be parked *inside* the
+    `.fw` root: on `document.body` it falls outside every theme-scoped rule and
+    renders the ghost in the wrong palette and fonts;
+  - the source row's fade deferred a tick, because the snapshot is taken
+    synchronously during `dragstart` and fading in the same tick bakes the
+    transparency into the image you drag around. **That deferred setter is
+    guarded on the drag ref**, or a drag ending within that tick lets the
+    timeout re-apply `dragging` after cleanup and strand a permanently faded
+    row;
+  - a `dragover-before`/`dragover-after` insertion line on the hovered row,
+    picked to match where the move actually lands (below when moving down,
+    above when moving up).
 - **Tasks are reorderable by dragging the row.** `moveTask` uses the same
   shuffle-and-write-back as `moveCat`, over one category's slots in the flat
   `tasks` array. **Dropping onto a row in a different category is ignored** —

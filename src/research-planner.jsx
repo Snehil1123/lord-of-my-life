@@ -425,7 +425,11 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
    since a grip on every row would be a lot of furniture */
 .taskrow[draggable="true"], .qrow[draggable="true"]{cursor:grab;}
 .taskrow[draggable="true"]:active, .qrow[draggable="true"]:active{cursor:grabbing;}
-.taskrow.dragging, .qrow.dragging{opacity:.4;}
+/* the row left behind while its snapshot follows the cursor */
+.taskrow.dragging, .qrow.dragging{opacity:.28;}
+/* insertion line on the edge the row will actually land on */
+.taskrow.dragover-before, .qrow.dragover-before{box-shadow:inset 0 3px 0 var(--pine);}
+.taskrow.dragover-after, .qrow.dragover-after{box-shadow:inset 0 -3px 0 var(--pine);}
 .tagproj{font-size:12px; color:var(--muted); flex:none;}
 .taskmin{font-family:var(--font-mono); font-size:12px; color:var(--muted); flex:none; margin-left:auto;}
 .pomodots{display:flex; gap:3px; flex:none; align-items:center;}
@@ -1404,7 +1408,52 @@ function SectionEditor({ section, cats, onAddPhase, onAddTask }) {
   );
 }
 
-function TaskRow({ t, burst, onToggle, onToggleAll, onDelete, onEdit, onAddSubtask, onToggleSubtask, onDeleteSubtask, onEditSubtask, now, sessionMin, inSession, sessionEmoji, dragging, onDragStart, onDragEnd, onDropOn }) {
+/* The thing that follows the cursor is a detached, fully opaque copy of the row
+   rather than the row itself. Handing Chromium the live element means the bitmap
+   it rasterises can pick up whatever the source is doing — the .dragging fade
+   most obviously, but also its transparent edges, since a row draws no
+   background of its own beyond the card behind it. A clone owes nothing to the
+   original: we give it a solid background, a hard edge and a lift shadow, and it
+   stays crisp no matter what happens to the row underneath.
+   It has to be attached and laid out to rasterise, hence the off-screen park
+   and the removal on the next tick — and it must be parked *inside* the themed
+   .fw root, not on document.body, or every theme-scoped rule and custom property
+   misses it and the ghost renders in the wrong palette and fonts. */
+function makeDragImage(el) {
+  const cs = getComputedStyle(el);
+  const clone = el.cloneNode(true);
+  clone.classList.remove("dragging", "dragover-before", "dragover-after");
+  clone.style.cssText = `position:absolute; top:-9999px; left:0; margin:0; pointer-events:none;
+    width:${el.offsetWidth}px; height:${el.offsetHeight}px; opacity:1;
+    background:${cs.backgroundColor === "rgba(0, 0, 0, 0)" ? "var(--card)" : cs.backgroundColor};
+    border-radius:8px; box-shadow:0 10px 24px rgba(0,0,0,.5); overflow:hidden;`;
+  (el.closest(".fw") || document.body).appendChild(clone);
+  return clone;
+}
+
+/* Shared by TaskRow and QueueRow. */
+function dragHandlers(drag) {
+  if (!drag) return {};
+  return {
+    draggable: true,
+    onDragStart: (e) => {
+      e.dataTransfer.effectAllowed = "move";
+      const r = e.currentTarget.getBoundingClientRect();
+      try {
+        const ghost = makeDragImage(e.currentTarget);
+        e.dataTransfer.setDragImage(ghost, e.clientX - r.left, e.clientY - r.top);
+        setTimeout(() => ghost.remove(), 0);
+      } catch (err) { /* older engines fall back to the default drag image */ }
+      drag.onStart();
+    },
+    onDragEnd: drag.onEnd,
+    onDragOver: (e) => { e.preventDefault(); drag.onOver(); },
+    onDragLeave: drag.onLeave,
+    onDrop: (e) => { e.preventDefault(); drag.onDrop(); },
+  };
+}
+
+function TaskRow({ t, burst, onToggle, onToggleAll, onDelete, onEdit, onAddSubtask, onToggleSubtask, onDeleteSubtask, onEditSubtask, now, sessionMin, inSession, sessionEmoji, drag }) {
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [title, setTitle] = useState(t.title);
@@ -1451,13 +1500,8 @@ function TaskRow({ t, burst, onToggle, onToggleAll, onDelete, onEdit, onAddSubta
 
   return (
     <>
-      <div className={`taskrow ${t.checked ? "done" : ""} ${burstClass(burst, t.id)} ${dragging ? "dragging" : ""} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}
-        draggable={!!onDragStart}
-        onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; onDragStart?.(); }}
-        onDragEnd={() => onDragEnd?.()}
-        onDragOver={(e) => onDropOn && e.preventDefault()}
-        onDrop={(e) => { e.preventDefault(); onDropOn?.(); }}
-        title="Drag to reorder">
+      <div className={`taskrow ${t.checked ? "done" : ""} ${burstClass(burst, t.id)} ${drag?.dragging ? "dragging" : ""} ${drag?.over || ""} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}
+        {...dragHandlers(drag)} title="Drag to reorder">
         <span className="checkwrap">
           <button className={`check ${t.checked ? "on" : ""}`} aria-label={t.checked ? "Mark not done" : "Mark done"}
             onClick={() => (hasSubs ? onToggleAll() : onToggle(t))}>✓</button>
@@ -1729,7 +1773,33 @@ function TaskGroupView({ data, setData, now, group, title, sessionEmoji }) {
   const [dragId, setDragId] = useState(null); // mirror, purely for the drag styling
   const taskDragRef = useRef(null);
   const [taskDragId, setTaskDragId] = useState(null);
+  const [overId, setOverId] = useState(null);
   const queued = new Set(data.sessionQueue || []);
+
+  // which edge of the hovered row to draw the insertion line on, matching where
+  // moveTask will actually drop it: below when moving down, above when moving up
+  const overClass = (targetId) => {
+    if (overId !== targetId) return "";
+    const fromId = taskDragRef.current;
+    if (!fromId || fromId === targetId) return "";
+    const from = data.tasks.find((t) => t.id === fromId), to = data.tasks.find((t) => t.id === targetId);
+    if (!from || !to || from.cat !== to.cat) return "";
+    const ids = data.tasks.filter((t) => t.cat === from.cat).map((t) => t.id);
+    return ids.indexOf(fromId) < ids.indexOf(targetId) ? "dragover-after" : "dragover-before";
+  };
+  const endTaskDrag = () => { taskDragRef.current = null; setTaskDragId(null); setOverId(null); };
+  const taskDrag = (id) => ({
+    dragging: taskDragId === id,
+    over: overClass(id),
+    // The fade is deferred a tick so it isn't captured in the drag snapshot. The
+    // ref guard matters: a drag that ends within that tick would otherwise have
+    // the timeout re-apply `dragging` after cleanup and strand a faded row.
+    onStart: () => { taskDragRef.current = id; setTimeout(() => { if (taskDragRef.current === id) setTaskDragId(id); }, 0); },
+    onEnd: endTaskDrag,
+    onOver: () => setOverId((o) => (o === id ? o : id)),
+    onLeave: () => setOverId((o) => (o === id ? null : o)),
+    onDrop: () => { moveTask(taskDragRef.current, id); endTaskDrag(); },
+  });
 
   const cats = catsIn(data, group);
   const tasks = data.tasks.filter((t) => cats.some((c) => c.id === t.cat));
@@ -1828,11 +1898,7 @@ function TaskGroupView({ data, setData, now, group, title, sessionEmoji }) {
               {list.map((t) => (
                 <TaskRow key={t.id} t={t} burst={burst} onToggle={toggle} onToggleAll={() => toggleAll(t.id)}
                   onDelete={delTask} onEdit={edit} now={now} sessionMin={data.settings.work}
-                  inSession={queued.has(t.id)} sessionEmoji={sessionEmoji}
-                  dragging={taskDragId === t.id}
-                  onDragStart={() => { taskDragRef.current = t.id; setTaskDragId(t.id); }}
-                  onDragEnd={() => { taskDragRef.current = null; setTaskDragId(null); }}
-                  onDropOn={() => { moveTask(taskDragRef.current, t.id); taskDragRef.current = null; setTaskDragId(null); }}
+                  inSession={queued.has(t.id)} sessionEmoji={sessionEmoji} drag={taskDrag(t.id)}
                   onAddSubtask={(t2, minutes, dueDate) => addSub(t.id, t2, minutes, dueDate)}
                   onToggleSubtask={(subId) => toggleSub(t.id, subId)}
                   onDeleteSubtask={(subId) => delSub(t.id, subId)}
@@ -2214,7 +2280,7 @@ function usePomodoro(data, setData, dataRef) {
 /* A queued task. The subtask list is a *sibling* of .qrow, not a child — the row
    itself completes the task on click, so nesting the subtasks inside it would
    mean checking a subtask also ticked off its parent. */
-function QueueRow({ t, data, setData, now, isActive, burst, setBurst, onComplete, onRemove, dragging, onDragStart, onDragEnd, onDropOn }) {
+function QueueRow({ t, data, setData, now, isActive, burst, setBurst, onComplete, onRemove, drag }) {
   const [expanded, setExpanded] = useState(false);
   const subs = t.subtasks || [];
   const doneSubs = subs.filter((x) => x.checked).length;
@@ -2222,13 +2288,9 @@ function QueueRow({ t, data, setData, now, isActive, burst, setBurst, onComplete
 
   return (
     <>
-      <div className={`qrow ${t.checked ? "done" : ""} ${burstClass(burst, t.id)} ${isActive ? "active" : ""} ${dragging ? "dragging" : ""}`}
+      <div className={`qrow ${t.checked ? "done" : ""} ${burstClass(burst, t.id)} ${isActive ? "active" : ""} ${drag?.dragging ? "dragging" : ""} ${drag?.over || ""}`}
         onClick={onComplete} title="Click to mark done · drag to reorder"
-        draggable
-        onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; onDragStart?.(); }}
-        onDragEnd={() => onDragEnd?.()}
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => { e.preventDefault(); onDropOn?.(); }}>
+        {...dragHandlers(drag)}>
         <span className="checkwrap">
           <button className={`check ${t.checked ? "on" : ""}`} aria-label={t.checked ? "Mark not done" : "Mark done"}>✓</button>
           {burst?.id === t.id && burst.kind === "done" && Array.from({ length: 8 }, (_, i) => (
@@ -2269,6 +2331,7 @@ function SessionView({ data, setData, sessionEmoji, now, timer }) {
   const [burst, setBurst] = useState(null);
   const qDragRef = useRef(null);
   const [qDragId, setQDragId] = useState(null);
+  const [qOverId, setQOverId] = useState(null);
 
   const queueIds = data.sessionQueue || [];
   // stale ids (task deleted elsewhere) are dropped on read rather than migrated
@@ -2289,6 +2352,18 @@ function SessionView({ data, setData, sessionEmoji, now, timer }) {
     ids.splice(ti, 0, ids.splice(fi, 1)[0]);
     setQueue(ids);
   };
+  const endQDrag = () => { qDragRef.current = null; setQDragId(null); setQOverId(null); };
+  const qDrag = (id) => ({
+    dragging: qDragId === id,
+    over: qOverId === id && qDragRef.current && qDragRef.current !== id
+      ? (queueIds.indexOf(qDragRef.current) < queueIds.indexOf(id) ? "dragover-after" : "dragover-before")
+      : "",
+    onStart: () => { qDragRef.current = id; setTimeout(() => { if (qDragRef.current === id) setQDragId(id); }, 0); },
+    onEnd: endQDrag,
+    onOver: () => setQOverId((o) => (o === id ? o : id)),
+    onLeave: () => setQOverId((o) => (o === id ? null : o)),
+    onDrop: () => { moveInQueue(qDragRef.current, id); endQDrag(); },
+  });
   const completeTask = (t) => {
     if (t.subtasks && t.subtasks.length) toggleAllSubtasks(data, setData, t.id, setBurst);
     else toggleTask(data, setData, t, setBurst);
@@ -2355,10 +2430,7 @@ function SessionView({ data, setData, sessionEmoji, now, timer }) {
         <QueueRow key={t.id} t={t} data={data} setData={setData} now={now}
           isActive={!!active && t.id === active.id} burst={burst} setBurst={setBurst}
           onComplete={() => completeTask(t)} onRemove={() => removeFromQueue(t.id)}
-          dragging={qDragId === t.id}
-          onDragStart={() => { qDragRef.current = t.id; setQDragId(t.id); }}
-          onDragEnd={() => { qDragRef.current = null; setQDragId(null); }}
-          onDropOn={() => { moveInQueue(qDragRef.current, t.id); qDragRef.current = null; setQDragId(null); }} />
+          drag={qDrag(t.id)} />
       ))}
 
       {picking ? (
