@@ -67,6 +67,7 @@ data = {
   settings: { work, short, long },       // pomodoro minutes
   pomoLog:  { "YYYY-MM-DD": count },      // completed work sessions per day
   sessionQueue: [taskId],                // tasks lined up in the Session tab
+  guests: [{ id, name, tasks: [{ id, title, minutes, est, done, checked }] }],
   categories: [{ id, name, color, group: "work" | "personal" }],
   seededRecurring: true,                 // one-time flag, see "Recurring tasks" below
   projects: [{ id, name, color,
@@ -229,12 +230,51 @@ looking for the old `.timerring` SVG, it was replaced by `.pomoprog`.
 - Clicking a queue row completes the task; the ✕ only removes it from the
   queue and leaves the task itself alone. Completed rows stay visible (struck
   through) so the session totals don't shrink as you work.
-- **Footer totals count the whole queue, completed rows included.** `doneEst`
-  counts a checked task's full `est` (not its `done`), so finishing a task
-  early doesn't leave the total looking unfinished. "Finish at" walks the
+- **Footer totals come from `sessionStats(tasks, settings, cycle, now)`**, which
+  is shared by your column and every guest column. It works from
+  `minutesLeft(t)` rather than `done`: a task with subtasks reports the sum of
+  its *unchecked* subtasks, so ticking a subtask moves the finish time. Counting
+  `done` alone was a bug — `done` only counts finished pomodoros, and a subtask
+  isn't one, so subtask progress changed nothing. "Finish at" walks the
   remaining sessions one at a time to add the break after each — including the
   long one every 4th — which is most of the difference over a full day. It's
   driven by the `now` prop, so it re-estimates as time passes.
+- **A shared room puts two people's sessions side by side over the network**
+  (`useSessionRoom`, `PeerColumn`, `joinRoom` in `sync.js`). Key points:
+  - **A room is a Supabase Realtime channel and nothing else** — no tables, no
+    schema, no rows to clean up. It stops existing when the last person leaves,
+    which is why joining needs no migration and costs no storage.
+  - Everything rides on **presence**, not broadcast: each person's payload is
+    their name, their queue and (for the host) the timer. A late joiner gets the
+    whole state on their first `sync` without anyone re-sending it.
+  - **The host owns the timer**; everyone else renders from it and their
+    controls are hidden. Two people both able to start and pause would need
+    conflict resolution for no real benefit. If no host is present, control
+    falls back to local — that's the graceful degradation when a host leaves.
+  - A running timer publishes an absolute **`endsAt`**, never a countdown, so
+    each client derives the remaining seconds from its own clock and nothing
+    drifts. A paused one publishes `left`. `total` rides along because the
+    host's session lengths are theirs, not the viewer's.
+  - The presence payload is republished on a **stable** subset of itself — the
+    `endsAt`/`left` fields change every tick and would otherwise flood the
+    channel.
+  - **The room code and the host flag are persisted together** in
+    `sessionStorage`. Persisting only the code meant a host who reloaded
+    rejoined as a guest and the room silently lost its timer authority.
+  - The display name defaults to the signed-in account but stays editable —
+    two signed-out devices would otherwise both publish the same name.
+- **Each column marks what the running pomodoro will do** (`SessionMark`):
+  "this session" on the active task, or "finishes this session" when that
+  pomodoro takes it to its last one.
+- **Other people can share the session on one device** (`data.guests`,
+  `GuestColumn`). Their tasks are typed in — a name and a length, no picker —
+  and live on the guest, **never in `data.tasks`**: they aren't your work, so
+  they must not appear in Work/Personal, on the Gantt, or to the assistant.
+  The shape matches a task closely enough that `estFor`, `recomputeSessions`
+  and `sessionStats` all apply unchanged. The pomodoro clock is shared; a
+  guest's tasks are ticked off by hand rather than credited by the timer.
+- `.focuswrap` widens to `.multi` only once a guest exists, so a solo session
+  keeps its narrow centred column.
 - The Add Task picker groups by Work then Personal (via `catsIn`), skipping
   empty categories, and lists only unchecked tasks not already queued. It
   closes after each add — reopening per task is the deliberate behaviour.

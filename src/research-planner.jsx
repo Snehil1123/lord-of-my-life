@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import {
   supabase, signUp, signIn, signOut, getSession, onAuthChange,
   fetchCloudData, pushCloudData, subscribeToCloudData,
+  joinRoom, newRoomCode,
 } from "./sync.js";
 import { agentAvailable, onToolCall, onEvent, runQuery, cancelQuery } from "./ai.js";
 
@@ -459,6 +460,40 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 
 /* ---------- focus / session ---------- */
 .focuswrap{max-width:480px; margin:0 auto; padding-top:8px;}
+/* widened only once someone else is in the session, so a solo session keeps its
+   narrow, centred column */
+.focuswrap.multi{max-width:1000px;}
+.qcols{display:flex; gap:20px; align-items:flex-start; flex-wrap:wrap;}
+.qcol{flex:1 1 300px; min-width:0;}
+.guestname{
+  border:1px solid transparent; background:none; border-radius:6px; padding:2px 6px;
+  font-family:var(--font-display); font-weight:700; font-size:18px; color:var(--ink);
+  min-width:0; flex:1;
+}
+.guestname:hover{border-color:var(--line-soft);}
+.guestname:focus{border-color:var(--pine); outline:none; background:var(--paper);}
+.qpeople{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:18px;}
+.qaddperson{
+  border:1px solid var(--line); background:var(--card); border-radius:999px;
+  padding:7px 16px; font-size:13.5px; font-weight:600; color:var(--muted);
+}
+.qaddperson:hover{border-color:var(--muted); color:var(--ink);}
+.roomcode{
+  font-family:var(--font-mono); font-size:16px; font-weight:700; letter-spacing:.22em;
+  color:var(--amber); background:var(--paper); border:1px solid var(--line);
+  border-radius:8px; padding:5px 10px 5px 14px;
+}
+.roomstatus{font-size:13px; color:var(--muted);}
+.roomjoin{width:150px; font-family:var(--font-mono); letter-spacing:.14em; text-transform:uppercase;}
+.roomname{width:130px;}
+.pomofollow{font-size:13px; color:var(--muted); padding:14px 0 2px;}
+/* someone else's row: theirs to tick off, not yours */
+.qrow.readonly{cursor:default;}
+.qrow.readonly .check{border-style:dashed;}
+.qnow{
+  font-family:var(--font-mono); font-size:11px; font-weight:600; flex:none;
+  background:var(--pine-soft); color:var(--pine); padding:1px 7px; border-radius:4px;
+}
 .pomocard{
   position:relative; overflow:hidden; border-radius:16px; padding:16px 20px 26px;
   text-align:center; background:var(--tomato-soft); border:1px solid var(--line);
@@ -910,6 +945,16 @@ export default function LordOfMyLife() {
 
   // held here, not in SessionView, so the countdown survives switching tabs
   const timer = usePomodoro(data, setData, dataRef);
+  const authEmail = useAuthEmail();
+  const roomQueue = useMemo(
+    () => (data.sessionQueue || []).map((id) => data.tasks.find((t) => t.id === id)).filter(Boolean),
+    [data.sessionQueue, data.tasks],
+  );
+  const session = useSessionRoom({
+    defaultName: authEmail ? authEmail.split("@")[0] : "",
+    myTasks: roomQueue,
+    timer,
+  });
 
   const sessionEmoji = theme === "fantasy" ? "🕯️" : "🍅";
   const assistantLabel = theme === "fantasy" ? "Wizard" : "Assistant";
@@ -936,7 +981,7 @@ export default function LordOfMyLife() {
       <main className="wrap">
         {view === "gantt" && <GanttView data={data} setData={setData} now={now} />}
         {view === "work" && <WorkView data={data} setData={setData} now={now} sessionEmoji={sessionEmoji} />}
-        {view === "session" && <SessionView data={data} setData={setData} sessionEmoji={sessionEmoji} now={now} timer={timer} />}
+        {view === "session" && <SessionView data={data} setData={setData} sessionEmoji={sessionEmoji} now={now} timer={timer} session={session} />}
         {view === "personal" && <PersonalView data={data} setData={setData} now={now} sessionEmoji={sessionEmoji} />}
         {view === "budget" && <BudgetView data={data} setData={setData} now={now} />}
       </main>
@@ -2200,6 +2245,34 @@ function BudgetView({ data, setData, now }) {
 /* ================= SESSION ================= */
 const MODE_LABEL = { work: "Pomodoro", short: "Short Break", long: "Long Break" };
 
+/* How much work is genuinely left on a task, in minutes. A task with subtasks
+   reports the sum of its *unchecked* subtasks — without this, ticking off a
+   subtask changed nothing in the session totals, because `done` only counts
+   finished pomodoros and a subtask isn't one. */
+function minutesLeft(t, workMin) {
+  if (t.checked) return 0;
+  const subs = t.subtasks || [];
+  if (subs.length) return subs.filter((x) => !x.checked).reduce((n, x) => n + x.minutes, 0);
+  return Math.max(0, t.est - t.done) * workMin;
+}
+
+/* Session totals for one person's list, plus when they'd finish starting now.
+   Remaining sessions are walked one at a time so the break after each is
+   counted, including the long one every 4th — that's most of the difference
+   over a full day. */
+function sessionStats(tasks, s, cycle, now) {
+  const totalEst = tasks.reduce((n, t) => n + t.est, 0);
+  const remaining = Math.ceil(tasks.reduce((n, t) => n + minutesLeft(t, s.work), 0) / s.work);
+  const doneEst = Math.max(0, totalEst - remaining);
+  let mins = 0;
+  for (let i = 0; i < remaining; i++) {
+    mins += s.work;
+    if (i < remaining - 1) mins += (cycle + i + 1) % 4 === 0 ? s.long : s.short;
+  }
+  const fmtSpan = mins >= 60 ? `${Math.floor(mins / 60)}h${mins % 60 ? ` ${mins % 60}m` : ""}` : `${mins}m`;
+  return { totalEst, doneEst, remaining, finishAt: new Date(now.getTime() + mins * 60000), fmtSpan };
+}
+
 /* The session queue is a list of task ids pulled in from Work/Personal. The tasks
    themselves stay in data.tasks — the queue only references them, so checking one
    off here is the same edit as checking it off in Work, and shows up everywhere. */
@@ -2277,6 +2350,214 @@ function usePomodoro(data, setData, dataRef) {
   return { mode, left, running, cycle, durFor, switchMode, reset, start, setLeft };
 }
 
+/* ---------------- shared focus room ----------------
+   Everyone in the room publishes their own queue through presence; the host
+   additionally publishes the timer, and everyone else renders from it. Making
+   one person authoritative is what keeps this simple — two people both able to
+   start and pause would need conflict resolution for no real benefit.
+
+   A running timer is published as an absolute `endsAt`, not a countdown, so
+   every client derives the remaining seconds from its own clock and nobody
+   drifts. A paused one publishes `left` instead, since there's no deadline. */
+const ROOM_KEY = "lordofmylife:room";
+const NAME_KEY = "lordofmylife:displayname";
+const roomTaskView = (t) => ({ id: t.id, title: t.title, est: t.est, done: t.done, checked: t.checked });
+
+// The signed-in email, purely so peers see a name rather than a random key.
+function useAuthEmail() {
+  const [email, setEmail] = useState(null);
+  useEffect(() => {
+    if (!supabase) return;
+    let alive = true;
+    getSession().then((s) => alive && setEmail(s?.user?.email || null)).catch(() => {});
+    const { data } = onAuthChange((s) => alive && setEmail(s?.user?.email || null));
+    return () => { alive = false; data?.subscription?.unsubscribe(); };
+  }, []);
+  return email;
+}
+
+function useSessionRoom({ defaultName, myTasks, timer }) {
+  const enabled = !!supabase;
+  // code *and* host flag are restored together: persisting only the code meant a
+  // host who reloaded rejoined as a guest and the room lost its timer authority
+  const restored = (() => {
+    try { return JSON.parse(sessionStorage.getItem(ROOM_KEY) || "{}"); } catch (e) { return {}; }
+  })();
+  const [code, setCode] = useState(restored.code || "");
+  // what peers see. Defaults to the signed-in account, but stays editable —
+  // without it two signed-out devices both publish the same name.
+  const [nameOverride, setNameOverride] = useState(() => { try { return localStorage.getItem(NAME_KEY) || ""; } catch (e) { return ""; } });
+  const myName = nameOverride || defaultName || "Someone";
+  const setName = (v) => {
+    setNameOverride(v);
+    try { v ? localStorage.setItem(NAME_KEY, v) : localStorage.removeItem(NAME_KEY); } catch (e) { /* private mode */ }
+  };
+  const [isHostLocal, setIsHost] = useState(!!restored.host);
+  const [peers, setPeers] = useState([]);
+  const [status, setStatus] = useState("idle"); // idle | connecting | joined | error
+  const keyRef = useRef(uid());
+  const connRef = useRef(null);
+
+  useEffect(() => {
+    try {
+      if (code) sessionStorage.setItem(ROOM_KEY, JSON.stringify({ code, host: isHostLocal }));
+      else sessionStorage.removeItem(ROOM_KEY);
+    } catch (e) { /* private mode */ }
+  }, [code, isHostLocal]);
+
+  useEffect(() => {
+    if (!enabled || !code) { setPeers([]); setStatus("idle"); return; }
+    setStatus("connecting");
+    const conn = joinRoom(code, keyRef.current, setPeers, (s) => {
+      setStatus(s === "SUBSCRIBED" ? "joined" : s === "CHANNEL_ERROR" || s === "TIMED_OUT" ? "error" : "connecting");
+    });
+    connRef.current = conn;
+    return () => { conn.leave(); connRef.current = null; };
+  }, [enabled, code]);
+
+  // republish whenever anything others can see changes
+  const payload = useMemo(() => ({
+    name: myName,
+    host: isHostLocal,
+    tasks: myTasks.slice(0, 20).map(roomTaskView),
+    timer: isHostLocal
+      ? { mode: timer.mode, running: timer.running, cycle: timer.cycle,
+          // absolute deadline while running so guests derive from their own clock;
+          // `total` rides along because the host's session lengths are theirs, not ours
+          endsAt: timer.running ? Date.now() + timer.left * 1000 : null,
+          left: timer.left, total: timer.durFor(timer.mode) }
+      : null,
+  }), [myName, isHostLocal, myTasks, timer.mode, timer.running, timer.cycle, timer.left]);
+
+  // the timer field changes every tick; only republish on the parts peers react to
+  const stable = JSON.stringify({ ...payload, timer: payload.timer && { ...payload.timer, endsAt: null, left: null } });
+  useEffect(() => {
+    if (status === "joined") connRef.current?.publish(payload);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, stable]);
+
+  const others = peers.filter((p) => p.key !== keyRef.current);
+  const hostPeer = peers.find((p) => p.host && p.key !== keyRef.current);
+
+  return {
+    code, others, status, available: enabled, isHost: isHostLocal,
+    name: nameOverride, namePlaceholder: defaultName || "Your name", setName,
+    inRoom: !!code && status === "joined",
+    hostTimer: hostPeer?.timer || null,
+    create: () => { setIsHost(true); setCode(newRoomCode()); },
+    join: (c) => { setIsHost(false); setCode(c.trim().toUpperCase()); },
+    leave: () => { setIsHost(false); setCode(""); setPeers([]); },
+  };
+}
+
+/* A remote participant's list. Read-only: you can see what they're on and what's
+   coming, but their tasks are theirs to tick off. */
+function PeerColumn({ peer, s, now }) {
+  const tasks = peer.tasks || [];
+  const active = tasks.find((t) => !t.checked) || null;
+  const st = sessionStats(tasks, s, peer.timer?.cycle || 0, now);
+  return (
+    <div className="qcol">
+      <div className="qhead">
+        <span className="h2">{peer.name || "Someone"}</span>
+        <span className="catcount" style={{ marginLeft: "auto" }}>{peer.host ? "host" : "guest"}</span>
+      </div>
+      {tasks.map((t) => (
+        <div key={t.id} className={`qrow readonly ${t.checked ? "done" : ""} ${active && t.id === active.id ? "active" : ""}`}>
+          <span className="checkwrap">
+            <span className={`check ${t.checked ? "on" : ""}`}>✓</span>
+          </span>
+          <span className="tasktitle" style={{ flex: 1, minWidth: 0 }}>{t.title}</span>
+          {active && t.id === active.id && <SessionMark t={t} />}
+          <span className="pcount">{t.done}/{t.est}</span>
+        </div>
+      ))}
+      {tasks.length === 0 && <div className="emptystate" style={{ padding: "10px 2px" }}>Nothing queued yet.</div>}
+      {tasks.length > 0 && (
+        <div className="qfoot">
+          <span>Sessions <b>{st.doneEst}/{st.totalEst}</b></span>
+          {st.remaining > 0
+            ? <span>Finish at <b>{st.finishAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</b> ({st.fmtSpan})</span>
+            : <span><b>All done</b></span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// what the pomodoro running right now will do to this task
+const SessionMark = ({ t }) => (
+  <span className="qnow">{t.done + 1 >= t.est ? "finishes this session" : "this session"}</span>
+);
+
+/* Someone else working alongside you on this device. Their tasks are typed in
+   here and live on the guest (data.guests), never in data.tasks — they're not
+   your work, so they must not show up in Work/Personal, the Gantt or anything
+   the assistant reads. Same shape as a task otherwise, so sessionStats and
+   estFor apply unchanged. */
+function GuestColumn({ guest, s, cycle, now, onAddTask, onToggleTask, onDelTask, onRename, onRemove }) {
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ title: "", minutes: 25 });
+
+  const submit = () => {
+    if (!form.title.trim()) return;
+    onAddTask(form.title.trim(), Math.max(5, +form.minutes || 25));
+    setForm({ title: "", minutes: 25 });
+    setAdding(false);
+  };
+  const st = sessionStats(guest.tasks, s, cycle, now);
+
+  return (
+    <div className="qcol">
+      <div className="qhead">
+        <input className="guestname" value={guest.name} onChange={(e) => onRename(e.target.value)}
+          aria-label="Person's name" />
+        <button className="xbtn" style={{ marginLeft: "auto" }} title={`Remove ${guest.name}`} onClick={onRemove}>✕</button>
+      </div>
+
+      {guest.tasks.map((t) => (
+        <div key={t.id} className={`qrow ${t.checked ? "done" : ""}`} onClick={() => onToggleTask(t.id)} title="Click to mark done">
+          <span className="checkwrap">
+            <button className={`check ${t.checked ? "on" : ""}`} aria-label={t.checked ? "Mark not done" : "Mark done"}>✓</button>
+          </span>
+          <span className="tasktitle" style={{ flex: 1, minWidth: 0 }}>{t.title}</span>
+          <span className="taskmin">{t.minutes} min</span>
+          <span className="pcount">{t.done}/{t.est}</span>
+          <button className="xbtn" title="Remove task" onClick={(e) => { e.stopPropagation(); onDelTask(t.id); }}>✕</button>
+        </div>
+      ))}
+      {guest.tasks.length === 0 && !adding && <div className="emptystate" style={{ padding: "10px 2px" }}>No tasks yet.</div>}
+
+      {adding ? (
+        <div className="pickpanel">
+          <input className="field" style={{ width: "100%" }} autoFocus placeholder="What are they working on?"
+            value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })}
+            onKeyDown={(e) => e.key === "Enter" && submit()} />
+          <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+            <input type="number" min="5" step="5" className="field" style={{ width: 70 }} value={form.minutes}
+              onChange={(e) => setForm({ ...form, minutes: e.target.value })}
+              onKeyDown={(e) => e.key === "Enter" && submit()} />
+            <span style={{ fontSize: 13, color: "var(--muted)" }}>min</span>
+            <button className="btn primary" style={{ marginLeft: "auto" }} onClick={submit}>Add</button>
+            <button className="btn ghost" onClick={() => setAdding(false)}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button className="qadd" onClick={() => setAdding(true)}>✛ Add Task</button>
+      )}
+
+      {guest.tasks.length > 0 && (
+        <div className="qfoot">
+          <span>Sessions <b>{st.doneEst}/{st.totalEst}</b></span>
+          {st.remaining > 0
+            ? <span>Finish at <b>{st.finishAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</b> ({st.fmtSpan})</span>
+            : <span><b>All done</b></span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* A queued task. The subtask list is a *sibling* of .qrow, not a child — the row
    itself completes the task on click, so nesting the subtasks inside it would
    mean checking a subtask also ticked off its parent. */
@@ -2302,6 +2583,7 @@ function QueueRow({ t, data, setData, now, isActive, burst, setBurst, onComplete
           ))}
         </span>
         <span className="tasktitle" style={{ flex: 1, minWidth: 0 }}>{t.title}</span>
+        {isActive && !t.checked && <SessionMark t={t} />}
         {subs.length > 0 && <span className="subprogress">{doneSubs}/{subs.length}</span>}
         <span className="pcount">{t.done}/{t.est}</span>
         <button className="subtoggle" title={expanded ? "Hide subtasks" : "Subtasks"}
@@ -2324,9 +2606,28 @@ function QueueRow({ t, data, setData, now, isActive, burst, setBurst, onComplete
   );
 }
 
-function SessionView({ data, setData, sessionEmoji, now, timer }) {
+function SessionView({ data, setData, sessionEmoji, now, timer, session }) {
   const s = data.settings;
-  const { mode, left, running, cycle, durFor, switchMode, reset, start, setLeft } = timer;
+  const [roomInput, setRoomInput] = useState("");
+  const { durFor, switchMode, reset, start, setLeft } = timer;
+
+  /* In a room, the host's timer is the one everyone sees. Guests derive the
+     countdown from the host's absolute `endsAt` against their own clock, so no
+     drift accumulates and no per-second messages are needed. */
+  const remote = session?.inRoom && session.hostTimer ? session.hostTimer : null;
+  const canControl = !remote;
+  const mode = remote ? remote.mode : timer.mode;
+  const running = remote ? remote.running : timer.running;
+  const cycle = remote ? remote.cycle : timer.cycle;
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!remote || !remote.running) return;
+    const id = setInterval(() => tick((n) => n + 1), 250);
+    return () => clearInterval(id);
+  }, [remote && remote.running, remote && remote.endsAt]);
+  const left = remote
+    ? (remote.running ? Math.max(0, Math.round((remote.endsAt - Date.now()) / 1000)) : remote.left)
+    : timer.left;
   const [picking, setPicking] = useState(false);
   const [burst, setBurst] = useState(null);
   const qDragRef = useRef(null);
@@ -2352,6 +2653,18 @@ function SessionView({ data, setData, sessionEmoji, now, timer }) {
     ids.splice(ti, 0, ids.splice(fi, 1)[0]);
     setQueue(ids);
   };
+  const guests = data.guests || [];
+  const setGuests = (g) => setData({ ...data, guests: g });
+  const updateGuest = (gid, fn) => setGuests(guests.map((g) => (g.id === gid ? fn(g) : g)));
+  const addGuest = () => setGuests([...guests, { id: uid(), name: `Person ${guests.length + 2}`, tasks: [] }]);
+  const addGuestTask = (gid, title, minutes) => updateGuest(gid, (g) => ({
+    ...g,
+    tasks: [...g.tasks, { id: uid(), title, minutes, est: estFor(minutes, s.work), done: 0, checked: false }],
+  }));
+  const toggleGuestTask = (gid, tid) => updateGuest(gid, (g) => ({
+    ...g, tasks: g.tasks.map((t) => (t.id === tid ? { ...t, checked: !t.checked } : t)),
+  }));
+
   const endQDrag = () => { qDragRef.current = null; setQDragId(null); setQOverId(null); };
   const qDrag = (id) => ({
     dragging: qDragId === id,
@@ -2369,25 +2682,13 @@ function SessionView({ data, setData, sessionEmoji, now, timer }) {
     else toggleTask(data, setData, t, setBurst);
   };
 
-  const total = durFor(mode);
+  const total = remote ? remote.total || durFor(mode) : durFor(mode);
   const pct = 1 - left / total;
   const mm = String(Math.floor(left / 60)).padStart(2, "0");
   const ss = String(left % 60).padStart(2, "0");
 
-  // Session accounting for everything in the queue, completed rows included, so
-  // the totals don't shrink as you tick things off.
-  const totalEst = queue.reduce((n, t) => n + t.est, 0);
-  const doneEst = queue.reduce((n, t) => n + (t.checked ? t.est : t.done), 0);
-  const remaining = Math.max(0, totalEst - doneEst);
-  // Walk the remaining sessions so the breaks between them are counted too,
-  // including the longer one every 4th — that's most of the difference on a long day.
-  let mins = 0;
-  for (let i = 0; i < remaining; i++) {
-    mins += s.work;
-    if (i < remaining - 1) mins += (cycle + i + 1) % 4 === 0 ? s.long : s.short;
-  }
-  const finishAt = new Date(now.getTime() + mins * 60000);
-  const fmtSpan = mins >= 60 ? `${Math.floor(mins / 60)}h${mins % 60 ? ` ${mins % 60}m` : ""}` : `${mins}m`;
+  const stats = sessionStats(queue, s, cycle, now);
+  const { totalEst, doneEst, remaining, finishAt, fmtSpan } = stats;
 
   const queued = new Set(queueIds);
   const available = data.tasks.filter((t) => !t.checked && !queued.has(t.id));
@@ -2395,32 +2696,41 @@ function SessionView({ data, setData, sessionEmoji, now, timer }) {
   const setDur = (k, v) => {
     const val = Math.max(1, Math.min(120, +v || 1));
     const tasks = k === "work" ? recomputeSessions(data.tasks, val) : data.tasks;
-    setData({ ...data, settings: { ...s, [k]: val }, tasks });
+    // guests' tasks track the focus length too — they're the same shape
+    const nextGuests = k === "work" ? guests.map((g) => ({ ...g, tasks: recomputeSessions(g.tasks, val) })) : guests;
+    setData({ ...data, settings: { ...s, [k]: val }, tasks, guests: nextGuests });
     if (!running) setLeft((k === "work" && mode === "work") || (k === "short" && mode === "short") || (k === "long" && mode === "long") ? val * 60 : left);
   };
 
   return (
-    <div className="focuswrap">
+    <div className={`focuswrap ${guests.length || (session?.others || []).length ? "multi" : ""}`}>
       <div className={`pomocard ${mode === "work" ? "" : "brk"} ${running ? "running" : ""}`}>
         <div className="pomoprog" style={{ width: `${pct * 100}%` }} />
         <div className="pomotabs">
           {["work", "short", "long"].map((m) => (
-            <button key={m} className={`pomotab ${mode === m ? "on" : ""}`} onClick={() => switchMode(m)}>{MODE_LABEL[m]}</button>
+            <button key={m} className={`pomotab ${mode === m ? "on" : ""}`} disabled={!canControl}
+              onClick={() => switchMode(m)}>{MODE_LABEL[m]}</button>
           ))}
         </div>
         <div className="pomodigits">{mm}:{ss}</div>
-        <div>
-          <button className="pomostart" onClick={start}>{running ? "Pause" : "Start"}</button>
-          {(left !== total || running) && <button className="pomoreset" onClick={reset}>reset</button>}
-        </div>
+        {canControl ? (
+          <div>
+            <button className="pomostart" onClick={start}>{running ? "Pause" : "Start"}</button>
+            {(left !== total || running) && <button className="pomoreset" onClick={reset}>reset</button>}
+          </div>
+        ) : (
+          <div className="pomofollow">following {session.others.find((p) => p.host)?.name || "the host"}'s timer</div>
+        )}
       </div>
 
       <div className="pomonow">
         {active ? <>#{activeNo}<strong>{active.title}</strong></> : <>Nothing queued — add a task below, or just focus.</>}
       </div>
 
+      <div className="qcols">
+      <div className="qcol">
       <div className="qhead">
-        <span className="h2">Tasks</span>
+        <span className="h2">{guests.length ? "You" : "Tasks"}</span>
         <span className="catcount" style={{ marginLeft: "auto" }}>
           today {sessionEmoji} ×{data.pomoLog[dateKey(now)] || 0} · {cycle % 4}/4 to long break
         </span>
@@ -2477,6 +2787,45 @@ function SessionView({ data, setData, sessionEmoji, now, timer }) {
           {remaining === 0 && <span><b>All done</b> — nothing left in this session.</span>}
         </div>
       )}
+      </div>
+
+      {(session?.others || []).map((p) => <PeerColumn key={p.key} peer={p} s={s} now={now} />)}
+
+      {guests.map((g) => (
+        <GuestColumn key={g.id} guest={g} s={s} cycle={cycle} now={now}
+          onAddTask={(title, minutes) => addGuestTask(g.id, title, minutes)}
+          onToggleTask={(tid) => toggleGuestTask(g.id, tid)}
+          onDelTask={(tid) => updateGuest(g.id, (x) => ({ ...x, tasks: x.tasks.filter((t) => t.id !== tid) }))}
+          onRename={(name) => updateGuest(g.id, (x) => ({ ...x, name }))}
+          onRemove={() => setGuests(guests.filter((x) => x.id !== g.id))} />
+      ))}
+      </div>
+
+      <div className="qpeople">
+        <button className="qaddperson" onClick={addGuest}>✛ Add person here</button>
+        {session && (session.inRoom || session.code ? (
+          <>
+            <span className="roomcode" title="Share this code so someone can join">{session.code}</span>
+            <input className="field roomname" placeholder={session.namePlaceholder} aria-label="Name others see"
+              value={session.name} onChange={(e) => session.setName(e.target.value)} />
+            <span className="roomstatus">
+              {session.status === "joined"
+                ? `${session.others.length + 1} in the room`
+                : session.status === "error" ? "connection problem" : "connecting…"}
+            </span>
+            <button className="qaddperson" onClick={session.leave}>Leave room</button>
+          </>
+        ) : session.available ? (
+          <>
+            <button className="qaddperson" onClick={session.create}>✦ Start a shared room</button>
+            <input className="field roomjoin" placeholder="or enter a code" maxLength={6}
+              value={roomInput} onChange={(e) => setRoomInput(e.target.value.toUpperCase())}
+              onKeyDown={(e) => { if (e.key === "Enter" && roomInput.trim()) { session.join(roomInput); setRoomInput(""); } }} />
+          </>
+        ) : (
+          <span className="roomstatus">Sign in to share a room with someone else.</span>
+        ))}
+      </div>
 
       <div className="durs">
         <label>focus <input type="number" className="field" value={s.work} onChange={(e) => setDur("work", e.target.value)} /> min</label>

@@ -37,6 +37,43 @@ export async function pushCloudData(userId, data) {
   if (error) throw error;
 }
 
+/* ---------------- shared focus rooms ----------------
+   A room is a Realtime channel and nothing else — no tables, no schema, no rows
+   to clean up. Everything about it is ephemeral: who's in it lives in the
+   channel's presence state, and it stops existing when the last person leaves.
+   That's why joining needs no migration and costs no storage.
+
+   Presence carries each person's whole payload (name, their queue, and — for
+   the host — the timer), so a late joiner is handed the current state on their
+   first `sync` without anyone having to re-broadcast it. */
+
+// no I/O/0/1 — these get read aloud and typed by hand
+const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+export const newRoomCode = () =>
+  Array.from({ length: 6 }, () => CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]).join("");
+
+export function joinRoom(code, presenceKey, onPeers, onStatus) {
+  const channel = supabase.channel(`focusroom:${code}`, {
+    config: { presence: { key: presenceKey } },
+  });
+
+  channel
+    .on("presence", { event: "sync" }, () => {
+      // presenceState() is { key: [payload, ...] }; we only ever track one per key
+      const state = channel.presenceState();
+      onPeers(Object.entries(state).map(([key, entries]) => ({ key, ...entries[0] })));
+    })
+    .subscribe((status) => {
+      onStatus(status);
+    });
+
+  return {
+    // called on every local change; presence replaces the whole payload
+    publish: (payload) => channel.track(payload).catch(() => {}),
+    leave: () => { try { channel.untrack(); } catch (e) { /* already gone */ } supabase.removeChannel(channel); },
+  };
+}
+
 // Fires cb(newData) whenever another device updates this user's row.
 export function subscribeToCloudData(userId, cb) {
   const channel = supabase
