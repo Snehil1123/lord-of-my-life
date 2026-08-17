@@ -679,6 +679,14 @@ surface the renderer gets is [electron/preload.cjs](electron/preload.cjs) (see "
   no `app.asar` so the rewrite is a no-op. Keep both halves — the unpack rule
   *and* the explicit path — or the assistant breaks in the installed app while
   still working perfectly under `npm run electron:dev`.
+- **Releases are built by CI, not by hand.** Pushing a `v*` tag runs
+  `.github/workflows/release.yml`, which sets the version from the tag,
+  reconstructs `.env.local` from the `VITE_SUPABASE_URL` /
+  `VITE_SUPABASE_ANON_KEY` repo secrets, and has electron-builder publish the
+  installer to GitHub Releases. Don't bump `version` in `package.json` by
+  hand — the tag is the source of truth. The repo is public so that
+  `/releases/latest` is shareable; the secrets are what keep the Supabase
+  values out of the source.
 - **Known gotcha**: if the Vite dev server (or anything else watching the
   project directory) is running while you `electron-builder` package the app,
   the file watcher can hold a handle inside `release/win-unpacked.tmp` and

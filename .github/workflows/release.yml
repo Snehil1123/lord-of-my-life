@@ -1,0 +1,57 @@
+name: Release
+
+# Pushing a version tag builds the Windows installer and publishes it to
+# GitHub Releases, so https://github.com/Snehil1123/lord-of-my-life/releases
+# always has the latest download.
+#
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# Needs two repo secrets (Settings → Secrets and variables → Actions):
+#   VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
+# Vite inlines these into the bundle at build time; without them the installed
+# app still runs, but sign-in and shared rooms are disabled.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: # lets you re-run a build by hand from the Actions tab
+
+permissions:
+  contents: write # electron-builder needs this to create the release
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Installs the Agent SDK's ~293MB platform binary as an optional
+      # dependency; that's most of the install time and most of the installer.
+      - run: npm ci
+
+      # The release version comes from the tag, so package.json never has to be
+      # edited by hand. Skipped on a manual run, which just uses what's committed.
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
+
+      - name: Write .env.local
+        shell: bash
+        run: |
+          {
+            echo "VITE_SUPABASE_URL=${{ secrets.VITE_SUPABASE_URL }}"
+            echo "VITE_SUPABASE_ANON_KEY=${{ secrets.VITE_SUPABASE_ANON_KEY }}"
+          } > .env.local
+
+      - run: npm run build
+
+      - name: Package and publish
+        run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
