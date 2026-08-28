@@ -25,3 +25,13 @@ contextBridge.exposeInMainWorld("lolAI", {
   },
   respondTool: (payload) => ipcRenderer.send("ai:tool-result", payload),
 });
+
+/* Read-only calendar access. The renderer supplies the client id (it comes from
+   the Vite build) and never sees the tokens, which stay in the main process. */
+contextBridge.exposeInMainWorld("lolCal", {
+  available: true,
+  connect: (cfg) => ipcRenderer.invoke("gcal:connect", cfg),
+  list: (cfg) => ipcRenderer.invoke("gcal:list", cfg),
+  status: () => ipcRenderer.invoke("gcal:status"),
+  disconnect: () => ipcRenderer.invoke("gcal:disconnect"),
+});

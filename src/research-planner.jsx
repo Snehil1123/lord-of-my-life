@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   supabase, signUp, signIn, signOut, getSession, onAuthChange,
   fetchCloudData, pushCloudData, subscribeToCloudData,
   joinRoom, newRoomCode,
 } from "./sync.js";
 import { agentAvailable, onToolCall, onEvent, runQuery, cancelQuery } from "./ai.js";
+import { calAvailable, calConfigured, calStatus, calConnect, calDisconnect, calFetch } from "./gcal.js";
 
 /* ============================================================
    LORD OF MY LIFE — one planner for the whole research pipeline
@@ -602,6 +603,87 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .presetform{display:flex; gap:6px; align-items:center; flex-wrap:wrap; padding:2px 16px 10px;}
 .presetform input{padding:5px 8px; font-size:13px;}
 
+/* ---------- calendar ---------- */
+.calnav{display:flex; gap:6px;}
+.calcard{margin-top:14px; overflow:hidden;}
+.calgrid{display:flex; overflow-x:auto;}
+.calgutterwrap{flex:none;}
+.calheadspacer{height:46px;}
+.calgutter{flex:none; width:52px;}
+.calhour{
+  height:44px; font-family:var(--font-mono); font-size:11px; color:var(--muted);
+  text-align:right; padding-right:6px; transform:translateY(-6px);
+}
+.calday{flex:1 1 0; min-width:104px; border-left:1px solid var(--line-soft);}
+.caldayhead{
+  height:26px; display:flex; align-items:center; justify-content:center; gap:5px;
+  font-size:12.5px; color:var(--muted); border-bottom:1px solid var(--line-soft);
+}
+.caldayhead.istoday{color:var(--tomato);}
+.calalldays{min-height:20px; padding:2px 3px; display:flex; flex-direction:column; gap:2px; border-bottom:1px solid var(--line-soft);}
+.calduechip{
+  font-size:10.5px; color:#fff; border-radius:3px; padding:1px 5px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+/* the hour rows are the click target for adding an event */
+.calslots{position:relative; cursor:copy;}
+.calslot{height:44px; border-bottom:1px solid var(--line-soft);}
+.calevent{
+  position:absolute; left:2px; right:2px; z-index:2; overflow:hidden;
+  background:var(--slate); color:#fff; border-radius:5px; padding:2px 5px;
+  font-size:11.5px; line-height:1.25; cursor:default;
+  display:flex; flex-direction:column; min-height:16px;
+}
+.caleventtitle{font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.caleventtime{font-family:var(--font-mono); font-size:10px; opacity:.85;}
+.calevent .xbtn{position:absolute; top:0; right:0; color:#fff;}
+.calevent:hover .xbtn{opacity:1;}
+/* planned session work: outlined so a real booking always reads as more solid */
+.calplan{
+  position:absolute; left:2px; right:2px; z-index:1; border-radius:5px; overflow:hidden;
+  border:1px dashed var(--tomato); background:var(--tomato-soft);
+}
+.calplan.break{border-color:var(--line); background:transparent;}
+.calplantxt{
+  display:block; font-size:11px; color:var(--ink); padding:1px 5px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+/* pulled from elsewhere, so it reads as a mirror rather than something you own */
+.calevent.fromgoogle{border-left:3px solid rgba(255,255,255,.5);}
+.calduechip.allday{background:var(--teal);}
+.gcalchip{
+  display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--muted);
+  border:1px solid var(--line); border-radius:999px; padding:3px 6px 3px 12px; background:var(--card);
+}
+.gcaldot{width:7px; height:7px; border-radius:50%; background:var(--teal);}
+.calnow{position:absolute; left:0; right:0; height:2px; background:var(--tomato); z-index:3;}
+.calnowdot{position:absolute; left:-3px; top:-3px; width:8px; height:8px; border-radius:50%; background:var(--tomato);}
+/* an event the session plan has to wait for, shown inline in the queue */
+.qevent{
+  display:flex; align-items:center; gap:9px; padding:8px 12px; margin-bottom:8px;
+  border-radius:8px; border:1px dashed var(--slate); background:var(--paper);
+}
+.qeventtime{font-family:var(--font-mono); font-size:11.5px; color:var(--slate); flex:none;}
+.qeventtitle{font-size:14px; font-weight:600;}
+.qeventnote{margin-left:auto; font-size:11.5px; color:var(--muted); flex:none;}
+/* interrupts the task above rather than preceding it — indented to show that */
+.qevent.during{margin-left:22px; border-style:dotted; margin-top:-4px;}
+/* ---------- calendar side panel ---------- */
+.fw.calopen{padding-left:var(--calw);}
+.calpanel{
+  position:fixed; top:0; left:0; bottom:0; width:var(--calw); z-index:40;
+  display:flex; flex-direction:column;
+  background:var(--card); border-right:1px solid var(--line);
+}
+.calgrip{
+  position:absolute; right:-3px; top:0; bottom:0; width:7px; z-index:41;
+  cursor:col-resize; background:transparent; border:none; padding:0;
+}
+.calgrip:hover, .calgrip.dragging{background:var(--pine); opacity:.5;}
+.calpanelscroll{flex:1; overflow-y:auto; padding:0 10px 14px;}
+.calpanelday{display:flex;}
+.calpanelday .calday{flex:1; min-width:0; border-left:1px solid var(--line-soft);}
+
 /* ---------- ai assistant ---------- */
 /* The panel is fixed to the right edge and the whole app is padded out of its way,
    so the sticky header reflows with everything else instead of sliding underneath. */
@@ -681,6 +763,16 @@ const dateKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2
 const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-3);
 const fmtDue = (iso) => new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
 const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+/* ---------------- calendar time helpers ----------------
+   An event is a local wall-clock thing: { date: "YYYY-MM-DD", start: "HH:MM" }.
+   Same reasoning as dateKey — never store or compare these as UTC instants, or
+   a 9am meeting drifts a day for anyone west of UTC. */
+const timeToMin = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + (m || 0); };
+const minToTime = (n) => `${String(Math.floor(n / 60) % 24).padStart(2, "0")}:${String(Math.round(n) % 60).padStart(2, "0")}`;
+const atTime = (dateStr, timeStr) => new Date(`${dateStr}T${timeStr}:00`);
+const fmtClock = (d) => d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+// the slice of the day the week grid draws; events outside it are clamped in
+const DAY_START = 7 * 60, DAY_END = 22 * 60;
 const fmtMoney = (n) => n.toLocaleString(undefined, { style: "currency", currency: "USD" });
 // sessions needed for a task of this length, given the current focus-session length (data.settings.work)
 const estFor = (minutes, sessionMin) => Math.max(1, Math.ceil(minutes / sessionMin));
@@ -886,6 +978,8 @@ function hydrate(d) {
 // Assistant panel width — a per-device UI preference like the theme, not synced data.
 const AIW_KEY = "lordofmylife:aiwidth";
 const AIW_MIN = 300, AIW_MAX = 860;
+const CALW_KEY = "lordofmylife:calwidth";
+const CALW_MIN = 220, CALW_MAX = 480;
 
 const THEME_KEY = "lordofmylife:theme";
 const THEMES = { dark: "fantasy", fantasy: "dark" }; // maps a theme to "what toggling gives you"
@@ -902,6 +996,12 @@ export default function LordOfMyLife() {
   const [aiWidth, setAiWidth] = useState(() => {
     const n = Number(localStorage.getItem(AIW_KEY));
     return n >= AIW_MIN && n <= AIW_MAX ? n : 380;
+  });
+  const [calOpen, setCalOpen] = useState(false);
+  const gcalState = useGoogleCalendar(now);
+  const [calWidth, setCalWidth] = useState(() => {
+    const n = Number(localStorage.getItem(CALW_KEY));
+    return n >= CALW_MIN && n <= CALW_MAX ? n : 280;
   });
   const saveTimer = useRef(null);
   // AiPanel's tool loop spans several awaits and several writes; reading `data` from its
@@ -942,6 +1042,9 @@ export default function LordOfMyLife() {
   useEffect(() => {
     try { localStorage.setItem(AIW_KEY, String(aiWidth)); } catch (e) { /* storage full or unavailable */ }
   }, [aiWidth]);
+  useEffect(() => {
+    try { localStorage.setItem(CALW_KEY, String(calWidth)); } catch (e) { /* storage full or unavailable */ }
+  }, [calWidth]);
 
   // held here, not in SessionView, so the countdown survives switching tabs
   const timer = usePomodoro(data, setData, dataRef);
@@ -955,13 +1058,27 @@ export default function LordOfMyLife() {
     myTasks: roomQueue,
     timer,
   });
+  // Your own events and anything pulled from Google, in one list — everything
+  // downstream (grid, panel, plan) treats them the same, except that Google
+  // events can't be edited here and all-day ones don't block time.
+  const allEvents = useMemo(
+    () => [...(data.events || []), ...gcalState.events],
+    [data.events, gcalState.events],
+  );
+  // One plan drives the calendar blocks, the left panel's agenda and the event
+  // dividers in the Session list, so the three can never disagree.
+  const plan = useMemo(
+    () => planSession(roomQueue, allEvents.filter((e) => !e.allDay), data.settings, timer.cycle, now),
+    [roomQueue, allEvents, data.settings, timer.cycle, now],
+  );
 
   const sessionEmoji = theme === "fantasy" ? "🕯️" : "🍅";
   const assistantLabel = theme === "fantasy" ? "Wizard" : "Assistant";
   const todayPomos = data.pomoLog[dateKey(new Date())] || 0;
 
   return (
-    <div className={`fw ${aiOpen ? "aiopen" : ""}`} data-theme={theme} style={{ "--aiw": `${aiWidth}px` }}>
+    <div className={`fw ${aiOpen ? "aiopen" : ""} ${calOpen && view !== "calendar" ? "calopen" : ""}`}
+      data-theme={theme} style={{ "--aiw": `${aiWidth}px`, "--calw": `${calWidth}px` }}>
       <style>{CSS}</style>
       {theme === "fantasy" && <FantasyScene />}
       <header className="hd">
@@ -971,17 +1088,25 @@ export default function LordOfMyLife() {
         <span className="wkchip">{new Date().toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span>
         {todayPomos > 0 && <span className="todaypomos">{sessionEmoji} ×{todayPomos} today</span>}
         <nav className="tabs">
-          {[["work", "Work"], ["personal", "Personal"], ["gantt", "Gantt Chart"], ["budget", "Budget"], ["session", "Session"]].map(([k, label]) => (
+          {[["work", "Work"], ["personal", "Personal"], ["calendar", "Calendar"], ["gantt", "Gantt Chart"], ["budget", "Budget"], ["session", "Session"]].map(([k, label]) => (
             <button key={k} className={`tab ${view === k ? "on" : ""}`} onClick={() => setView(k)}>{label}</button>
           ))}
         </nav>
+        {view !== "calendar" && !calOpen && (
+          <button className="btn ghost" title="Show today's calendar" onClick={() => setCalOpen(true)}>▤ Today</button>
+        )}
         {!aiOpen && <button className="btn ghost" title={`Open the ${assistantLabel.toLowerCase()}`} onClick={() => setAiOpen(true)}>✦ {assistantLabel}</button>}
         <SyncBar data={data} setData={setData} />
       </header>
+      {calOpen && view !== "calendar" && (
+        <CalendarPanel data={data} events={allEvents} now={now} plan={plan} setWidth={setCalWidth}
+          onClose={() => setCalOpen(false)} />
+      )}
       <main className="wrap">
+        {view === "calendar" && <CalendarView data={data} setData={setData} now={now} plan={plan} events={allEvents} gcal={gcalState} />}
         {view === "gantt" && <GanttView data={data} setData={setData} now={now} />}
         {view === "work" && <WorkView data={data} setData={setData} now={now} sessionEmoji={sessionEmoji} />}
-        {view === "session" && <SessionView data={data} setData={setData} sessionEmoji={sessionEmoji} now={now} timer={timer} session={session} />}
+        {view === "session" && <SessionView data={data} setData={setData} sessionEmoji={sessionEmoji} now={now} timer={timer} session={session} plan={plan} />}
         {view === "personal" && <PersonalView data={data} setData={setData} now={now} sessionEmoji={sessionEmoji} />}
         {view === "budget" && <BudgetView data={data} setData={setData} now={now} />}
       </main>
@@ -1805,6 +1930,276 @@ function AddTaskRow({ onAdd }) {
   );
 }
 
+/* ================= CALENDAR =================
+   Events are absolutely positioned inside a day column and the session plan is
+   drawn in the same space, so a collision is visible rather than something you
+   have to work out. The week view is seven of these columns; the side panel is
+   one. They share CalendarDay so the two can't drift apart. */
+
+/* Pulled Google events are a cache of somebody else's system, so they live in
+   component state rather than in `data` — persisting them would bloat the synced
+   row and go stale the moment the real calendar changed. Polled rather than
+   pushed: Google's webhooks need a public HTTPS endpoint, which a desktop app
+   doesn't have. */
+function useGoogleCalendar(now) {
+  const [state, setState] = useState({ connected: false, email: null, events: [], error: null, busy: false });
+
+  const refresh = async () => {
+    if (!calAvailable() || !calConfigured()) return;
+    const res = await calFetch();
+    setState((s) => ({ ...s, connected: res.connected, email: res.email ?? s.email, events: res.events, error: res.error || null }));
+  };
+
+  useEffect(() => {
+    if (!calAvailable() || !calConfigured()) return;
+    calStatus().then((s) => setState((p) => ({ ...p, connected: s.connected, email: s.email })));
+    refresh();
+    const id = setInterval(refresh, 5 * 60 * 1000);
+    const onFocus = () => refresh();
+    window.addEventListener("focus", onFocus);
+    return () => { clearInterval(id); window.removeEventListener("focus", onFocus); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return {
+    ...state,
+    available: calAvailable(), configured: calConfigured(),
+    connect: async () => {
+      setState((s) => ({ ...s, busy: true, error: null }));
+      const res = await calConnect();
+      setState((s) => ({ ...s, busy: false, error: res?.error || null }));
+      if (!res?.error) { setState((s) => ({ ...s, connected: true, email: res?.email || s.email })); refresh(); }
+    },
+    disconnect: async () => { await calDisconnect(); setState({ connected: false, email: null, events: [], error: null, busy: false }); },
+    refresh,
+  };
+}
+
+const CAL_SPAN = DAY_END - DAY_START;
+const CAL_HOURS = Array.from({ length: CAL_SPAN / 60 + 1 }, (_, i) => DAY_START + i * 60);
+const minsOf = (d) => d.getHours() * 60 + d.getMinutes();
+// null for anything wholly outside the drawn window, so a late-running plan
+// doesn't produce negative-height blocks stacked at the bottom edge
+const placeIn = (startMin, endMin) => {
+  const top = Math.max(startMin, DAY_START), bottom = Math.min(endMin, DAY_END);
+  if (bottom <= top) return null;
+  return { top: `${((top - DAY_START) / CAL_SPAN) * 100}%`, height: `${((bottom - top) / CAL_SPAN) * 100}%` };
+};
+
+function CalendarDay({ day, data, events, plan, now, onSlotClick, onDelEvent, compact }) {
+  const key = dateKey(day);
+  const cats = allCats(data);
+  const dayEvents = events.filter((e) => e.date === key && !e.allDay);
+  const dayPlan = plan.filter((b) => b.type !== "event" && dateKey(b.start) === key);
+  const isToday = key === dateKey(now);
+  const nowPct = ((minsOf(now) - DAY_START) / CAL_SPAN) * 100;
+
+  return (
+    <div className="calslots" onClick={onSlotClick && ((e) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      const mins = DAY_START + Math.floor(((e.clientY - r.top) / r.height) * CAL_SPAN / 30) * 30;
+      onSlotClick(day, Math.max(DAY_START, Math.min(DAY_END - 30, mins)));
+    })}>
+      {CAL_HOURS.slice(0, -1).map((h) => <div key={h} className="calslot" />)}
+
+      {dayPlan.map((b, i) => {
+        const box = placeIn(minsOf(b.start), minsOf(b.end));
+        if (!box) return null;
+        return (
+          <div key={i} className={`calplan ${b.type}`} style={box}
+            title={b.type === "task" ? `${b.title} — session ${b.n} of ${b.of}` : b.long ? "long break" : "break"}>
+            {b.type === "task" && <span className="calplantxt">{b.title}</span>}
+          </div>
+        );
+      })}
+
+      {dayEvents.map((ev) => {
+        const box = placeIn(timeToMin(ev.start), timeToMin(ev.end));
+        if (!box) return null;
+        const cat = cats.find((c) => c.id === ev.cat);
+        return (
+          <div key={ev.id} className={`calevent phaserow ${ev.source === "google" ? "fromgoogle" : ""}`}
+            style={{ ...box, background: cat ? cat.color : ev.source === "google" ? "var(--teal)" : "var(--slate)" }}
+            title={`${ev.title}${cat ? ` · ${cat.name}` : ""} — ${ev.start}–${ev.end}${ev.source === "google" ? " · from Google Calendar" : ""}`}
+            onClick={(e) => e.stopPropagation()}>
+            <span className="caleventtitle">{ev.title}</span>
+            <span className="caleventtime">{ev.start}–{ev.end}{cat && !compact ? ` · ${cat.name}` : ""}</span>
+            {/* Google events are a mirror of somewhere else; deleting here would
+                be a lie, so only the app's own events get a remove button */}
+            {onDelEvent && ev.source !== "google" && (
+              <button className="xbtn" title="Delete event" onClick={() => onDelEvent(ev.id)}>✕</button>
+            )}
+          </div>
+        );
+      })}
+
+      {isToday && nowPct >= 0 && nowPct <= 100 && (
+        <div className="calnow" style={{ top: `${nowPct}%` }}><span className="calnowdot" /></div>
+      )}
+    </div>
+  );
+}
+
+const CalHours = () => (
+  <div className="calgutter">{CAL_HOURS.map((h) => <div key={h} className="calhour">{minToTime(h)}</div>)}</div>
+);
+
+function CalendarView({ data, setData, now, plan, events, gcal }) {
+  const [offset, setOffset] = useState(0); // weeks from this one
+  const [form, setForm] = useState({ date: "", start: "09:00", end: "10:00", title: "", cat: "" });
+  const titleRef = useRef(null);
+
+  const mine = data.events || [];
+  const days = Array.from({ length: 7 }, (_, i) => addDays(addDays(monday(now), offset * 7), i));
+
+  const addEvent = () => {
+    if (!form.title.trim() || !form.date || timeToMin(form.end) <= timeToMin(form.start)) return;
+    setData({ ...data, events: [...mine, { id: uid(), ...form, title: form.title.trim() }] });
+    setForm({ ...form, title: "" });
+  };
+  const delEvent = (id) => setData({ ...data, events: mine.filter((e) => e.id !== id) });
+
+  // clicking an empty slot prefills the form rather than opening a popover
+  const slotClick = (day, minutes) => {
+    setForm((f) => ({ ...f, date: dateKey(day), start: minToTime(minutes), end: minToTime(Math.min(DAY_END, minutes + 60)), title: "" }));
+    setTimeout(() => titleRef.current?.focus(), 0);
+  };
+
+  const todayKey = dateKey(now);
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 220 }}><div className="h2">Calendar</div></div>
+        <GoogleChip gcal={gcal} />
+        <div className="calnav">
+          <button className="btn" onClick={() => setOffset(offset - 1)}>←</button>
+          <button className="btn" onClick={() => setOffset(0)}>This week</button>
+          <button className="btn" onClick={() => setOffset(offset + 1)}>→</button>
+        </div>
+      </div>
+      {gcal.error && <div className="aierror" style={{ marginTop: 10 }}>{gcal.error}</div>}
+
+      <div className="card calcard">
+        <div className="calgrid">
+          <div className="calgutterwrap"><div className="calheadspacer" /><CalHours /></div>
+          {days.map((d) => {
+            const key = dateKey(d);
+            const dueHere = data.tasks.filter((t) => t.dueDate === key && !t.checked);
+            return (
+              <div className="calday" key={key}>
+                <div className={`caldayhead ${key === todayKey ? "istoday" : ""}`}>
+                  {d.toLocaleDateString(undefined, { weekday: "short" })} <b>{d.getDate()}</b>
+                </div>
+                <div className="calalldays">
+                  {events.filter((e) => e.allDay && e.date === key).map((e) => (
+                    <span key={e.id} className="calduechip allday" title={`all day — ${e.title}`}>{e.title}</span>
+                  ))}
+                  {dueHere.map((t) => (
+                    <span key={t.id} className="calduechip" title={`due — ${t.title}`}
+                      style={{ background: catColorFor(allCats(data), t.cat) }}>{t.title}</span>
+                  ))}
+                </div>
+                <CalendarDay day={d} data={data} events={events} plan={plan} now={now}
+                  onSlotClick={slotClick} onDelEvent={delEvent} />
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="addrow">
+          <input className="field" ref={titleRef} style={{ flex: 1, minWidth: 150 }} placeholder="Event (e.g. Lab meeting)"
+            value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })}
+            onKeyDown={(e) => e.key === "Enter" && addEvent()} />
+          <select className="field" value={form.cat} onChange={(e) => setForm({ ...form, cat: e.target.value })}
+            title="Category (optional) — colours the event">
+            <option value="">No category</option>
+            <optgroup label="Work">
+              {catsIn(data, "work").map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </optgroup>
+            <optgroup label="Personal">
+              {catsIn(data, "personal").map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </optgroup>
+          </select>
+          <input type="date" className="field" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+          <input type="time" className="field" value={form.start} onChange={(e) => setForm({ ...form, start: e.target.value })} />
+          <span style={{ color: "var(--muted)", fontSize: 13 }}>to</span>
+          <input type="time" className="field" value={form.end} onChange={(e) => setForm({ ...form, end: e.target.value })} />
+          <button className="btn primary" onClick={addEvent}>Add event</button>
+        </div>
+      </div>
+      <div className="sub" style={{ marginTop: 10 }}>
+        Click any slot to start an event there. Queued session work is drawn in outline and steps over anything booked.
+      </div>
+    </div>
+  );
+}
+
+/* Today as a single column of the same grid — same hour bars, same now line,
+   same blocks — rather than a separate agenda that could disagree with it. */
+/* Connect / disconnect, and what account is feeding events in. */
+function GoogleChip({ gcal }) {
+  if (!gcal.available) return <span className="roomstatus">Google Calendar needs the desktop app.</span>;
+  if (!gcal.configured) return <span className="roomstatus">Google Calendar isn't configured in this build.</span>;
+  if (!gcal.connected) {
+    return (
+      <button className="btn" onClick={gcal.connect} disabled={gcal.busy}>
+        {gcal.busy ? "Waiting for Google…" : "Connect Google Calendar"}
+      </button>
+    );
+  }
+  return (
+    <span className="gcalchip">
+      <span className="gcaldot" />
+      {gcal.email || "Google Calendar"}
+      <button className="btn ghost aimini" onClick={gcal.refresh} title="Refresh now">↻</button>
+      <button className="btn ghost aimini" onClick={gcal.disconnect} title="Disconnect">✕</button>
+    </span>
+  );
+}
+
+function CalendarPanel({ data, events, now, plan, setWidth, onClose }) {
+  const [dragging, setDragging] = useState(false);
+  const scrollRef = useRef(null);
+
+  // open with the current hour in view rather than at 7am
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const pct = (minsOf(new Date()) - DAY_START) / CAL_SPAN;
+    el.scrollTop = Math.max(0, pct * el.scrollHeight - el.clientHeight / 2);
+  }, []);
+
+  const startDrag = (e) => {
+    e.preventDefault();
+    setDragging(true);
+    const cap = Math.min(CALW_MAX, Math.max(CALW_MIN, window.innerWidth - 420));
+    const onMove = (ev) => setWidth(Math.min(cap, Math.max(CALW_MIN, ev.clientX)));
+    const onUp = () => { setDragging(false); window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  return (
+    <aside className="calpanel">
+      <div className={`calgrip ${dragging ? "dragging" : ""}`} onMouseDown={startDrag}
+        title="Drag to resize" role="separator" aria-orientation="vertical" />
+      <div className="aihead">
+        <span className="aititle">{now.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}</span>
+        <button className="btn ghost aimini" onClick={onClose} title="Close panel">✕</button>
+      </div>
+      <div className="calpanelscroll" ref={scrollRef}>
+        <div className="calpanelday">
+          <CalHours />
+          <div className="calday">
+            <CalendarDay day={now} data={data} events={events} plan={plan} now={now} compact />
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
 /* ================= WORK / PERSONAL =================
    Both are the same view over a different `group` of categories, so they share
    one body. Categories come from data.categories, so the sections here are
@@ -2256,6 +2651,53 @@ function minutesLeft(t, workMin) {
   return Math.max(0, t.est - t.done) * workMin;
 }
 
+/* Lays the session queue forward from `from`, stepping over anything already
+   booked. This is the one place that decides when work actually happens: the
+   week grid draws it, the Session list reads the events out of it, and the
+   finish time is simply the end of the last block.
+
+   Returned blocks are in order and absolute: { type: "task"|"break"|"event" }.
+   An "event" block appears where the plan had to wait for it, which is what
+   makes the Session list able to say "this task is after the lab meeting". */
+const PLAN_CAP = 60; // stop laying out rather than spin on pathological input
+function planSession(tasks, events, s, cycle, from) {
+  const busy = events
+    .map((e) => ({ id: e.id, title: e.title, start: atTime(e.date, e.start), end: atTime(e.date, e.end) }))
+    .filter((b) => b.end > from && b.end > b.start)
+    .sort((a, b) => a.start - b.start);
+
+  const blocks = [];
+  const noted = new Set();
+  let cursor = new Date(from);
+  let cyc = cycle;
+
+  for (const t of tasks) {
+    const mins = minutesLeft(t, s.work);
+    if (mins <= 0) continue;
+    const count = Math.ceil(mins / s.work);
+    for (let i = 0; i < count; i++) {
+      if (blocks.length > PLAN_CAP) return blocks;
+      const dur = s.work * 60000;
+      // walk past every event this session would collide with
+      for (let guard = 0; guard < busy.length + 1; guard++) {
+        const hit = busy.find((b) => b.start < new Date(cursor.getTime() + dur) && b.end > cursor);
+        if (!hit) break;
+        if (!noted.has(hit.id)) { blocks.push({ type: "event", ...hit }); noted.add(hit.id); }
+        cursor = new Date(hit.end.getTime());
+      }
+      const start = new Date(cursor);
+      cursor = new Date(cursor.getTime() + dur);
+      blocks.push({ type: "task", taskId: t.id, title: t.title, start, end: new Date(cursor), n: i + 1, of: count });
+      cyc += 1;
+      const brk = (cyc % 4 === 0 ? s.long : s.short) * 60000;
+      blocks.push({ type: "break", long: cyc % 4 === 0, start: new Date(cursor), end: new Date(cursor.getTime() + brk) });
+      cursor = new Date(cursor.getTime() + brk);
+    }
+  }
+  if (blocks.length && blocks[blocks.length - 1].type === "break") blocks.pop();
+  return blocks;
+}
+
 /* Session totals for one person's list, plus when they'd finish starting now.
    Remaining sessions are walked one at a time so the break after each is
    counted, including the long one every 4th — that's most of the difference
@@ -2606,7 +3048,7 @@ function QueueRow({ t, data, setData, now, isActive, burst, setBurst, onComplete
   );
 }
 
-function SessionView({ data, setData, sessionEmoji, now, timer, session }) {
+function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = [] }) {
   const s = data.settings;
   const [roomInput, setRoomInput] = useState("");
   const { durFor, switchMode, reset, start, setLeft } = timer;
@@ -2688,7 +3130,31 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session }) {
   const ss = String(left % 60).padStart(2, "0");
 
   const stats = sessionStats(queue, s, cycle, now);
-  const { totalEst, doneEst, remaining, finishAt, fmtSpan } = stats;
+  const { totalEst, doneEst, remaining } = stats;
+  // when the plan had to route around meetings, its end is the honest answer
+  const planned = plan.length ? plan[plan.length - 1].end : null;
+  const finishAt = planned || stats.finishAt;
+  const spanMin = Math.round((finishAt - now) / 60000);
+  const fmtSpan = spanMin >= 60 ? `${Math.floor(spanMin / 60)}h${spanMin % 60 ? ` ${spanMin % 60}m` : ""}` : `${Math.max(0, spanMin)}m`;
+  /* Events the plan had to wait for, attached to the task they affect. The two
+     cases read very differently and must not be conflated: an event before a
+     task's first session means the whole task happens afterwards, while one
+     landing between its sessions means the task is interrupted and only
+     *finishes* afterwards. */
+  const blockers = useMemo(() => {
+    const map = {}; const started = new Set(); let pending = [];
+    for (const b of plan) {
+      if (b.type === "event") { pending.push(b); continue; }
+      if (b.type !== "task") continue;
+      const rec = map[b.taskId] || (map[b.taskId] = { before: [], during: [] });
+      if (pending.length) {
+        (started.has(b.taskId) ? rec.during : rec.before).push(...pending);
+        pending = [];
+      }
+      started.add(b.taskId);
+    }
+    return map;
+  }, [plan]);
 
   const queued = new Set(queueIds);
   const available = data.tasks.filter((t) => !t.checked && !queued.has(t.id));
@@ -2737,10 +3203,26 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session }) {
       </div>
 
       {queue.map((t) => (
-        <QueueRow key={t.id} t={t} data={data} setData={setData} now={now}
+        <React.Fragment key={t.id}>
+        {(blockers[t.id]?.before || []).map((ev) => (
+          <div className="qevent" key={ev.id} title="Booked — the session picks up afterwards">
+            <span className="qeventtime">{fmtClock(ev.start)}–{fmtClock(ev.end)}</span>
+            <span className="qeventtitle">{ev.title}</span>
+            <span className="qeventnote">everything below is after this</span>
+          </div>
+        ))}
+        <QueueRow t={t} data={data} setData={setData} now={now}
           isActive={!!active && t.id === active.id} burst={burst} setBurst={setBurst}
           onComplete={() => completeTask(t)} onRemove={() => removeFromQueue(t.id)}
           drag={qDrag(t.id)} />
+        {(blockers[t.id]?.during || []).map((ev) => (
+          <div className="qevent during" key={ev.id} title="This lands in the middle of the task above">
+            <span className="qeventtime">{fmtClock(ev.start)}–{fmtClock(ev.end)}</span>
+            <span className="qeventtitle">{ev.title}</span>
+            <span className="qeventnote">the task above only finishes after this</span>
+          </div>
+        ))}
+        </React.Fragment>
       ))}
 
       {picking ? (

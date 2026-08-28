@@ -35,8 +35,10 @@ process — see "AI assistant".)
 - **Persistence**: `loadData()` / `saveData()` read/write `localStorage` under
   key `lordofmylife:data`, debounced 500ms after `data` changes. No export/
   import — removed as unnecessary once cloud sync existed.
-- **Five views**, switched by the `view` tab in the header, all reading from
+- **Six views**, switched by the `view` tab in the header, all reading from
   the same `data`:
+  - `CalendarView` — a week of one-off events with the session plan drawn over
+    it. See "Calendar" below.
   - `GanttView` / `ProjectGantt` — projects → sections → phases, rendered on a
     week-resolution grid. Weeks are the grid's *resolution* only; columns are
     labelled with the date each week starts (`colLabel`), not week numbers.
@@ -69,6 +71,7 @@ data = {
   sessionQueue: [taskId],                // tasks lined up in the Session tab
   guests: [{ id, name, tasks: [{ id, title, minutes, est, done, checked }] }],
   categories: [{ id, name, color, group: "work" | "personal" }],
+  events: [{ id, title, date: "YYYY-MM-DD", start: "HH:MM", end: "HH:MM", cat? }],
   seededRecurring: true,                 // one-time flag, see "Recurring tasks" below
   projects: [{ id, name, color,
                 phases: [{ id, name, start, end, done }],
@@ -191,6 +194,78 @@ themselves the day after they're checked off.
   a unique `key`) — don't hand-roll a one-off task with `recurring: true`
   outside that list, or it won't survive `ensureRecurringSeeds`'s dedup logic
   on a fresh install.
+
+## Calendar
+
+A week grid (`CalendarView`) of one-off events, plus a collapsible left panel
+(`CalendarPanel`) showing today when you're on any other tab. Repeating events
+are deliberately not built yet.
+
+- **`CalendarDay` is the one column implementation**, shared by both: the week
+  view renders seven, the panel renders one. Same hour bars, same now line, same
+  event and plan geometry (`placeIn`, `CAL_HOURS`), so the two can't drift apart.
+  The panel passes `compact` to drop the category label, and omits the slot-click
+  and delete handlers to make itself read-only.
+- **Google Calendar is read-only and pulled, not stored.** `electron/gcal.cjs`
+  owns the OAuth (Authorization Code + PKCE, loopback redirect on 127.0.0.1) and
+  the fetching; `src/gcal.js` is the renderer seam and does the only conversion
+  from Google's RFC3339 instants to the planner's local wall-clock shape.
+  Points that matter:
+  - Pulled events live in `useGoogleCalendar` **component state, never in
+    `data`** — they mirror someone else's system, so persisting them would bloat
+    the synced row and go stale. They're merged with `data.events` into
+    `allEvents` purely for display and planning.
+  - **Polled, not pushed** (on focus and every 5 minutes). Google's push
+    notifications need a public HTTPS endpoint to receive webhooks, which a
+    desktop app doesn't have.
+  - The fetch is a **window** (`timeMin`/`timeMax`) with `singleEvents=true`
+    rather than a sync token. That expansion is what makes a recurring Google
+    meeting appear correctly even though this app's own events have no repeats.
+  - **All-day events don't block time**: they're flagged `allDay` and filtered
+    out before `planSession`, so a multi-day conference doesn't consume the
+    whole scheduling window. They render as chips instead.
+  - A 401 clears the stored token so the UI can prompt a reconnect, rather than
+    retrying forever.
+  - The refresh token is encrypted with Electron `safeStorage` in `userData`. If
+    the platform has no encryption available it simply isn't persisted — it is
+    never written as plaintext.
+  - Google events have no delete button; removing one here would be a lie.
+  - `VITE_GOOGLE_CLIENT_ID` ships in the build and is **not** a secret — PKCE is
+    what protects the exchange. Google's desktop client type also issues a
+    "secret" it documents as non-confidential; it's sent only if present.
+- **An event's `cat` is optional and comes from `data.categories`** — the add
+  row's picker is built from `catsIn(data, group)`, so user-made sections like
+  Quals or LomL Dev appear without any further wiring. The category is what
+  colours the event; uncategorised ones fall back to `var(--slate)`.
+
+- **Events are wall-clock, not instants**: `{ date: "YYYY-MM-DD", start: "HH:MM" }`,
+  same reasoning as `dateKey` — storing a UTC timestamp would drift a 9am
+  meeting onto the wrong day for anyone west of UTC. `atTime(date, time)` is the
+  only place they become a `Date`.
+- **`planSession(tasks, events, settings, cycle, from)` is the single source of
+  truth for when work happens.** It walks the queue forward from `from`, laying
+  down one block per remaining pomodoro and stepping the cursor past any event
+  that would overlap. It returns ordered absolute blocks —
+  `{ type: "task" | "break" | "event" }` — and an `"event"` block appears
+  wherever the plan had to wait. The week grid draws it, the left panel's agenda
+  reads it, the Session list derives its event dividers from it, and "Finish at"
+  is just the end of the last block. Don't recompute any of that separately.
+- `PLAN_CAP` bounds the output; a queue long enough to run for days would
+  otherwise lay out forever.
+- **The Session list distinguishes two cases, and conflating them reads as a
+  bug**: an event *before* a task's first session means the whole task happens
+  afterwards (divider above the row, "everything below is after this"), while an
+  event landing *between* its sessions means the task is interrupted and only
+  finishes afterwards (indented note below the row). `blockers` in `SessionView`
+  tracks which tasks have already started to tell them apart.
+- `place()` returns `null` for anything wholly outside the drawn window
+  (`DAY_START`/`DAY_END`), so a plan running past midnight doesn't stack
+  negative-height blocks at the bottom edge.
+- The left panel mirrors the assistant panel's mechanics exactly — `--calw` on
+  the `.fw` root feeding both the panel width and the root's `padding-left`,
+  window-level drag listeners, persisted to `lordofmylife:calwidth`. It's hidden
+  on the Calendar tab itself, since the full grid is right there. It scrolls to
+  put the current hour in view on open rather than starting at `DAY_START`.
 
 ## Session queue
 

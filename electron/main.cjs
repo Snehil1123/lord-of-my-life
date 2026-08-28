@@ -1,6 +1,8 @@
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, safeStorage } = require("electron");
 const path = require("node:path");
+const fs = require("node:fs");
 const { runAgentQuery, interruptAgent } = require("./agent.cjs");
+const gcal = require("./gcal.cjs");
 
 const isDev = !app.isPackaged;
 
@@ -82,3 +84,38 @@ ipcMain.handle("ai:query", async (event, { prompt, system, model, sessionId }) =
 });
 
 ipcMain.on("ai:cancel", () => interruptAgent());
+
+/* ---------------- Google Calendar ----------------
+   The refresh token is a long-lived credential, so it's encrypted with the OS
+   keychain via safeStorage rather than left as plain JSON in userData. If the
+   platform has no encryption available, we don't fall back to plaintext — we
+   just don't persist, and the user reconnects next launch. */
+const tokenFile = () => path.join(app.getPath("userData"), "gcal.token");
+const store = {
+  get() {
+    try {
+      if (!fs.existsSync(tokenFile())) return null;
+      const raw = fs.readFileSync(tokenFile());
+      return JSON.parse(safeStorage.decryptString(raw));
+    } catch (e) { return null; }
+  },
+  set(value) {
+    try {
+      if (!value) { fs.rmSync(tokenFile(), { force: true }); return; }
+      if (!safeStorage.isEncryptionAvailable()) return;
+      fs.writeFileSync(tokenFile(), safeStorage.encryptString(JSON.stringify(value)));
+    } catch (e) { /* keep going without persistence */ }
+  },
+};
+const gcalArgs = (cfg) => ({ ...cfg, store, openUrl: (u) => shell.openExternal(u) });
+
+ipcMain.handle("gcal:connect", async (_e, cfg) => {
+  try { return await gcal.connect(gcalArgs(cfg)); }
+  catch (err) { return { error: err.message }; }
+});
+ipcMain.handle("gcal:list", async (_e, cfg) => {
+  try { return await gcal.listEvents(gcalArgs(cfg)); }
+  catch (err) { return { error: err.message }; }
+});
+ipcMain.handle("gcal:status", () => gcal.status({ store }));
+ipcMain.handle("gcal:disconnect", () => gcal.disconnect({ store }));
