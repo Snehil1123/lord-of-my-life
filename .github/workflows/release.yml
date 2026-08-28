@@ -6,10 +6,11 @@ name: Release
 #
 #   git tag v0.2.0 && git push origin v0.2.0
 #
-# Needs two repo secrets (Settings → Secrets and variables → Actions):
-#   VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
-# Vite inlines these into the bundle at build time; without them the installed
-# app still runs, but sign-in and shared rooms are disabled.
+# Needs repo secrets (Settings → Secrets and variables → Actions):
+#   VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY   — sign-in and shared rooms
+#   VITE_GOOGLE_CLIENT_ID, VITE_GOOGLE_CLIENT_SECRET — Google Calendar
+# Vite inlines these into the bundle at build time. Missing ones just disable
+# that feature; the app still builds and runs.
 
 on:
   push:
@@ -47,11 +48,35 @@ jobs:
           {
             echo "VITE_SUPABASE_URL=${{ secrets.VITE_SUPABASE_URL }}"
             echo "VITE_SUPABASE_ANON_KEY=${{ secrets.VITE_SUPABASE_ANON_KEY }}"
+            echo "VITE_GOOGLE_CLIENT_ID=${{ secrets.VITE_GOOGLE_CLIENT_ID }}"
+            echo "VITE_GOOGLE_CLIENT_SECRET=${{ secrets.VITE_GOOGLE_CLIENT_SECRET }}"
           } > .env.local
 
       - run: npm run build
 
-      - name: Package and publish
-        run: npx electron-builder --win --publish always
+      - name: Package
+        run: npx electron-builder --win --publish never
+
+      # Publishing by hand rather than with electron-builder's own publisher:
+      # that one creates the release as a *draft* by default (invisible to the
+      # people you share the link with) and raced with itself uploading multiple
+      # artifacts, ending up with two release objects for one tag. Creating the
+      # release explicitly is deterministic, and only the .exe is attached —
+      # latest.yml and the .blockmap exist for auto-update, which this app
+      # doesn't use, and on a release page they're just confusing clutter.
+      - name: Publish to GitHub Releases
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          installer=$(ls release/*.exe)
+          echo "Publishing $installer ($(du -h "$installer" | cut -f1))"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$installer" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$installer" \
+              --title "$GITHUB_REF_NAME" \
+              --notes "Windows installer. Download the .exe below and run it.
+          Windows will warn about an unidentified publisher — choose **More info → Run anyway**."
+          fi

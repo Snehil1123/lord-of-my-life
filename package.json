@@ -42,13 +42,6 @@
     "directories": {
       "output": "release"
     },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "Snehil1123",
-        "repo": "lord-of-my-life"
-      }
-    ],
     "win": {
       "target": "nsis"
     },
