@@ -6,8 +6,19 @@ done in.
 
 **[⬇ Download the latest version for Windows](https://github.com/Snehil1123/lord-of-my-life/releases/latest)**
 
-Windows will warn that the installer is from an unidentified publisher — the app
-isn't code-signed. Choose **More info → Run anyway**.
+The installer isn't code-signed, so Windows will object in one of two ways:
+
+- **"Windows protected your PC"** (SmartScreen) — choose
+  **More info → Run anyway**.
+- **"Smart App Control blocked this app"** — this one has no bypass. Smart App
+  Control only runs software that's signed or already known to Microsoft, and
+  ignores the Run-anyway path entirely. Either turn it off (Windows Security →
+  App & browser control → Smart App Control — note that turning it off is
+  permanent; re-enabling it requires reinstalling Windows) or run the app from
+  source as below.
+
+Signing the build is what actually fixes the second case, for everyone at once.
+See "Releasing" below.
 
 ## What's in it
 
@@ -56,3 +67,27 @@ installer and publishes it.
 ```bash
 git tag v0.2.0 && git push origin v0.2.0
 ```
+
+### Code signing (optional)
+
+Builds are unsigned unless a set of `AZURE_SIGN_*` repo secrets is present, in
+which case the workflow signs through [Azure Trusted
+Signing](https://learn.microsoft.com/en-us/azure/trusted-signing/) — currently
+about $10/month, and the cheapest certificate that Smart App Control accepts.
+Traditional OV/EV certificates from a CA work too and cost several hundred a
+year; either way the certificate has to be issued to a verified identity, which
+is the part that takes time rather than the wiring.
+
+Set up a Trusted Signing account and certificate profile, create a service
+principal with the *Trusted Signing Certificate Profile Signer* role, then add:
+
+```
+AZURE_SIGN_ENDPOINT   https://<region>.codesigning.azure.net
+AZURE_SIGN_ACCOUNT    Trusted Signing account name
+AZURE_SIGN_PROFILE    certificate profile name
+AZURE_SIGN_PUBLISHER  the certificate subject name, exactly
+AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET
+```
+
+The next tag you push comes out signed, and the release notes drop the
+Run-anyway instructions.

@@ -54,8 +54,56 @@ jobs:
 
       - run: npm run build
 
+      # Code signing is optional and off unless the AZURE_SIGN_* secrets exist.
+      # Unsigned is fine for SmartScreen (users click "Run anyway") but Windows
+      # Smart App Control blocks unsigned installers outright, with no bypass —
+      # a valid signature is the only thing that clears it.
+      #
+      # To turn it on: create an Azure Trusted Signing account + certificate
+      # profile, then add these repo secrets:
+      #   AZURE_SIGN_ENDPOINT   https://<region>.codesigning.azure.net
+      #   AZURE_SIGN_ACCOUNT    the Trusted Signing account name
+      #   AZURE_SIGN_PROFILE    the certificate profile name
+      #   AZURE_SIGN_PUBLISHER  the subject name on the certificate, exactly
+      #   AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET
+      #     — a service principal with the "Trusted Signing Certificate Profile
+      #       Signer" role; electron-builder reads these three from the env.
       - name: Package
-        run: npx electron-builder --win --publish never
+        shell: bash
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          SIGN_ENDPOINT: ${{ secrets.AZURE_SIGN_ENDPOINT }}
+          SIGN_ACCOUNT: ${{ secrets.AZURE_SIGN_ACCOUNT }}
+          SIGN_PROFILE: ${{ secrets.AZURE_SIGN_PROFILE }}
+          SIGN_PUBLISHER: ${{ secrets.AZURE_SIGN_PUBLISHER }}
+        run: |
+          set -euo pipefail
+          if [ -n "${SIGN_ENDPOINT:-}" ]; then
+            echo "Signing with Azure Trusted Signing."
+            npx electron-builder --win --publish never \
+              -c.win.azureSignOptions.endpoint="$SIGN_ENDPOINT" \
+              -c.win.azureSignOptions.codeSigningAccountName="$SIGN_ACCOUNT" \
+              -c.win.azureSignOptions.certificateProfileName="$SIGN_PROFILE" \
+              -c.win.azureSignOptions.publisherName="$SIGN_PUBLISHER"
+            echo "Windows installer. Download the .exe below and run it." > notes.md
+          else
+            echo "No AZURE_SIGN_* secrets set — building unsigned."
+            npx electron-builder --win --publish never
+            cat > notes.md <<'EOF'
+          Windows installer. Download the .exe below and run it.
+
+          This build isn't code-signed, so Windows will push back:
+
+          - **"Windows protected your PC"** — choose **More info -> Run anyway**.
+          - **Smart App Control blocked this app** — there is no bypass for this
+            one. Smart App Control only runs signed or already-known software.
+            You can turn it off under Windows Security -> App & browser control
+            -> Smart App Control, but note that turning it off is permanent:
+            re-enabling it requires reinstalling Windows.
+          EOF
+          fi
 
       # Publishing by hand rather than with electron-builder's own publisher:
       # that one creates the release as a *draft* by default (invisible to the
@@ -74,9 +122,8 @@ jobs:
           echo "Publishing $installer ($(du -h "$installer" | cut -f1))"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "$installer" --clobber
+            gh release edit "$GITHUB_REF_NAME" --notes-file notes.md
           else
             gh release create "$GITHUB_REF_NAME" "$installer" \
-              --title "$GITHUB_REF_NAME" \
-              --notes "Windows installer. Download the .exe below and run it.
-          Windows will warn about an unidentified publisher — choose **More info → Run anyway**."
+              --title "$GITHUB_REF_NAME" --notes-file notes.md
           fi

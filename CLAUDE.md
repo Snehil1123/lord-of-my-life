@@ -762,6 +762,20 @@ surface the renderer gets is [electron/preload.cjs](electron/preload.cjs) (see "
   hand — the tag is the source of truth. The repo is public so that
   `/releases/latest` is shareable; the secrets are what keep the Supabase
   values out of the source.
+- **Publishing is done by `gh release create`, not electron-builder's own
+  publisher.** That one creates the release as a *draft* by default and raced
+  with itself across artifacts, leaving two release objects for one tag — the
+  visible one holding nothing but a `.blockmap`. The explicit step attaches only
+  the `.exe`; `latest.yml`/`.blockmap` exist for auto-update, which this app
+  doesn't do.
+- **Code signing is optional and off by default.** `azureSignOptions` is *not*
+  in `package.json` — electron-builder switches to the Azure signing manager the
+  moment that key exists, so a half-filled config would break every unsigned
+  build. Instead the workflow passes `-c.win.azureSignOptions.*` overrides only
+  when the `AZURE_SIGN_*` secrets are set, and picks the release notes to match.
+  Unsigned matters: SmartScreen has a "Run anyway" bypass, **Smart App Control
+  does not** — it blocks unsigned installers outright, so a signature is the
+  only thing that makes the download work for those users.
 - **Known gotcha**: if the Vite dev server (or anything else watching the
   project directory) is running while you `electron-builder` package the app,
   the file watcher can hold a handle inside `release/win-unpacked.tmp` and
