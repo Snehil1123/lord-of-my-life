@@ -736,6 +736,13 @@ surface the renderer gets is [electron/preload.cjs](electron/preload.cjs) (see "
   **The assistant only works under this, not plain `npm run dev`.**
 - `npm run electron:build` — `vite build` then `electron-builder`, producing
   a Windows installer under `release/`.
+- `npm run app:install` — the same build with `--dir` (no NSIS step, so it's
+  fast), then `scripts/make-shortcut.mjs` writes Desktop and Start Menu `.lnk`s
+  pointing at `release/win-unpacked/Lord of My Life.exe`. This is how the app
+  gets used day to day without a dev server. It deliberately skips the
+  installer: a locally built binary has no mark-of-the-web, so Smart App
+  Control leaves it alone, while the same app downloaded from Releases is
+  blocked outright.
 - `vite.config.js` sets `base: "./"` — required so the built `dist/index.html`
   resolves its asset paths under Electron's `file://` protocol; don't remove it.
 - **The installer is much bigger now — 162MB.** `@anthropic-ai/claude-agent-sdk`

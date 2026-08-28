@@ -59,6 +59,24 @@ The assistant panel additionally needs the desktop app — it runs the Claude
 Agent SDK in Electron's main process, authenticated by your own Claude
 subscription, so there's no API key anywhere in this project.
 
+### Installing your own build
+
+You don't have to keep a dev server running to use the app. This builds it and
+drops shortcuts on the Desktop and in the Start Menu:
+
+```bash
+npm run app:install
+```
+
+The result lives in `release/win-unpacked/` (about 660 MB, most of it the Agent
+SDK's runtime) and runs standalone — no Vite, no terminal. Re-run the command
+after pulling changes to pick them up.
+
+Worth knowing: a build you make yourself isn't subject to the Smart App Control
+block that stops the downloaded installer, because it never carried a
+mark-of-the-web. Stop the dev server before running this — a live file watcher
+can hold a handle in `release/` and fail the build with `EPERM`.
+
 ## Releasing
 
 Tag and push; the workflow in `.github/workflows/release.yml` builds the
