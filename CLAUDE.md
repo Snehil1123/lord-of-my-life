@@ -224,8 +224,14 @@ are deliberately not built yet.
   - **All-day events don't block time**: they're flagged `allDay` and filtered
     out before `planSession`, so a multi-day conference doesn't consume the
     whole scheduling window. They render as chips instead.
-  - A 401 clears the stored token so the UI can prompt a reconnect, rather than
-    retrying forever.
+  - **Both ways a grant can die clear the stored token**, so `status()` never
+    claims a connection that can't fetch: a 401 from the Calendar API, and an
+    `invalid_grant` from the refresh call. The second one matters because Google
+    expires refresh tokens after 7 days while the OAuth client is still in
+    *Testing* publishing status. Any *other* token error is rethrown untouched —
+    a transient 500 must not log the user out. `tokenRequest` carries Google's
+    machine-readable `error` on `err.code` precisely so that check doesn't have
+    to match on prose.
   - The refresh token is encrypted with Electron `safeStorage` in `userData`. If
     the platform has no encryption available it simply isn't persisted — it is
     never written as plaintext.

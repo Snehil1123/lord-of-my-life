@@ -30,7 +30,11 @@ async function tokenRequest(body) {
     body: new URLSearchParams(body).toString(),
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json.error_description || json.error || `Token request failed (${res.status})`);
+  if (!res.ok) {
+    const err = new Error(json.error_description || json.error || `Token request failed (${res.status})`);
+    err.code = json.error; // the machine-readable half; the message is prose
+    throw err;
+  }
   return json;
 }
 
@@ -106,12 +110,23 @@ async function accessToken({ clientId, clientSecret, store }) {
   const saved = store.get();
   if (!saved?.refresh_token) return null;
   if (saved.access_token && Date.now() < saved.expires_at) return saved.access_token;
-  const tok = await tokenRequest({
-    client_id: clientId,
-    ...(clientSecret ? { client_secret: clientSecret } : {}),
-    refresh_token: saved.refresh_token,
-    grant_type: "refresh_token",
-  });
+  let tok;
+  try {
+    tok = await tokenRequest({
+      client_id: clientId,
+      ...(clientSecret ? { client_secret: clientSecret } : {}),
+      refresh_token: saved.refresh_token,
+      grant_type: "refresh_token",
+    });
+  } catch (err) {
+    // invalid_grant means the refresh token is dead — revoked, or expired,
+    // which Google does after 7 days while the OAuth client is still in
+    // Testing. Nothing but consenting again recovers it, so drop the token
+    // rather than leave `status()` claiming a connection that can't fetch.
+    if (err.code !== "invalid_grant") throw err;
+    store.set(null);
+    throw new Error("Google sign-in expired — connect again.");
+  }
   const next = { ...saved, access_token: tok.access_token, expires_at: Date.now() + (tok.expires_in - 60) * 1000 };
   store.set(next);
   return next.access_token;
