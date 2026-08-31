@@ -362,6 +362,24 @@ looking for the old `.timerring` SVG, it was replaced by `.pomoprog`.
 - The Add Task picker groups by Work then Personal (via `catsIn`), skipping
   empty categories, and lists only unchecked tasks not already queued. It
   closes after each add — reopening per task is the deliberate behaviour.
+- **"✎ New Task" creates a task without leaving the Session tab**: title,
+  minutes, group, category. `createTask` builds exactly what `TaskGroupView`'s
+  `addTask` builds, so it's an ordinary task — it appears under its category in
+  Work/Personal, is editable, takes subtasks, and carries the `.tagsess` pill.
+  Points to keep:
+  - The task and its `sessionQueue` entry are written in **one `setData`**. Two
+    writes off the same `data` would discard the first, same trap as unlinking a
+    section's tasks.
+  - The category `<select>` is driven by `catsIn(data, draft.group)`, so changing
+    the group repopulates it and user-made sections appear with no extra wiring.
+    `draftCat` falls back to the group's first category rather than storing a
+    default, which is what keeps a group switch from leaving a stale `cat` from
+    the other group selected.
+  - Group and category persist between consecutive adds (several new tasks
+    usually share them) but reset when the tab unmounts. They're component
+    state, deliberately not in `data` — a transient UI preference shouldn't sync.
+  - Add is disabled with an empty title, and when the chosen group has no
+    categories at all, which is the only way `draftCat` can be `""`.
 
 ## Gantt sections
 

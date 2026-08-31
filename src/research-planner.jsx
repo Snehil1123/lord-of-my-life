@@ -3071,6 +3071,9 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
     ? (remote.running ? Math.max(0, Math.round((remote.endsAt - Date.now()) / 1000)) : remote.left)
     : timer.left;
   const [picking, setPicking] = useState(false);
+  // group/cat persist between adds — several new tasks in a row usually share them
+  const [draft, setDraft] = useState({ title: "", minutes: 25, group: "work", cat: "" });
+  const [creating, setCreating] = useState(false);
   const [burst, setBurst] = useState(null);
   const qDragRef = useRef(null);
   const [qDragId, setQDragId] = useState(null);
@@ -3084,6 +3087,23 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
 
   const setQueue = (ids) => setData({ ...data, sessionQueue: ids });
   const addToQueue = (id) => { setQueue([...queueIds, id]); setPicking(false); };
+  // A task typed in here is an ordinary task, filed under a real category, so it
+  // shows up in Work/Personal like any other. The task and its queue entry are
+  // written in one setData — two writes off the same `data` would drop the first.
+  const draftCats = catsIn(data, draft.group);
+  const draftCat = draftCats.some((c) => c.id === draft.cat) ? draft.cat : draftCats[0]?.id || "";
+  const createTask = () => {
+    const title = draft.title.trim();
+    if (!title || !draftCat) return;
+    const minutes = Math.max(5, +draft.minutes || 25);
+    const task = {
+      id: uid(), title, cat: draftCat, minutes, est: estFor(minutes, s.work),
+      done: 0, checked: false, oneOnOne: false, dueDate: null,
+    };
+    setData({ ...data, tasks: [...data.tasks, task], sessionQueue: [...queueIds, task.id] });
+    setDraft({ ...draft, title: "", minutes: 25, cat: draftCat });
+    setCreating(false);
+  };
   const removeFromQueue = (id) => setQueue(queueIds.filter((x) => x !== id));
   // reordering the queue also moves which task is active, since "active" is just
   // the first unchecked one — that's the point of being able to drag them
@@ -3258,8 +3278,43 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
           )}
           <button className="btn" style={{ marginTop: 6, width: "100%" }} onClick={() => setPicking(false)}>Done</button>
         </div>
+      ) : creating ? (
+        <div className="pickpanel">
+          <input className="field" style={{ width: "100%" }} autoFocus placeholder="What are you working on?"
+            value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+            onKeyDown={(e) => e.key === "Enter" && createTask()} />
+          <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+            <input type="number" min="5" step="5" className="field" style={{ width: 70 }} value={draft.minutes}
+              onChange={(e) => setDraft({ ...draft, minutes: e.target.value })}
+              onKeyDown={(e) => e.key === "Enter" && createTask()} />
+            <span style={{ fontSize: 13, color: "var(--muted)" }}>min</span>
+            <select className="field" style={{ flex: 1, minWidth: 0 }} value={draft.group}
+              onChange={(e) => setDraft({ ...draft, group: e.target.value, cat: "" })}>
+              <option value="work">Work</option>
+              <option value="personal">Personal</option>
+            </select>
+            <select className="field" style={{ flex: 1, minWidth: 0 }} value={draftCat}
+              disabled={!draftCats.length}
+              onChange={(e) => setDraft({ ...draft, cat: e.target.value })}>
+              {draftCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          {!draftCats.length && (
+            <div className="emptystate" style={{ padding: "10px 2px" }}>
+              No sections in {draft.group === "work" ? "Work" : "Personal"} yet — add one there first.
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+            <button className="btn primary" style={{ marginLeft: "auto" }}
+              disabled={!draft.title.trim() || !draftCat} onClick={createTask}>Add</button>
+            <button className="btn ghost" onClick={() => setCreating(false)}>Cancel</button>
+          </div>
+        </div>
       ) : (
-        <button className="qadd" onClick={() => setPicking(true)}>✛ Add Task</button>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button className="qadd" style={{ flex: 1 }} onClick={() => setPicking(true)}>✛ Add Task</button>
+          <button className="qadd" style={{ flex: 1 }} onClick={() => setCreating(true)}>✎ New Task</button>
+        </div>
       )}
 
       {queue.length > 0 && (
