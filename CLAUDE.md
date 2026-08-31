@@ -237,8 +237,11 @@ are deliberately not built yet.
     never written as plaintext.
   - Google events have no delete button; removing one here would be a lie.
   - `VITE_GOOGLE_CLIENT_ID` ships in the build and is **not** a secret — PKCE is
-    what protects the exchange. Google's desktop client type also issues a
-    "secret" it documents as non-confidential; it's sent only if present.
+    what protects the exchange. `VITE_GOOGLE_CLIENT_SECRET` isn't really one
+    either — Google documents the desktop client's secret as non-confidential —
+    but it is **required**: without it the token exchange fails with
+    "client_secret is missing". `explain()` catches exactly that case, and only
+    when no secret was sent, so a genuinely wrong secret still reports as itself.
 - **An event's `cat` is optional and comes from `data.categories`** — the add
   row's picker is built from `catsIn(data, group)`, so user-made sections like
   Quals or LomL Dev appear without any further wiring. The category is what

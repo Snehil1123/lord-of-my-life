@@ -38,6 +38,18 @@ async function tokenRequest(body) {
   return json;
 }
 
+/* Google's own text for this one is "client_secret is missing.", which says
+   nothing about where to put it. Only claimed when we know we sent none, so a
+   genuinely wrong secret still reports as itself. */
+function explain(err, clientSecret) {
+  if (clientSecret || !/client_secret/i.test(err.message)) return err;
+  return new Error(
+    "This Google client needs a client secret. Copy it from the Cloud Console " +
+      "(Credentials -> your OAuth client) into VITE_GOOGLE_CLIENT_SECRET in " +
+      ".env.local, then rebuild with: npm run app:install"
+  );
+}
+
 /* Opens the consent screen and exchanges the code. Returns the token bundle;
    the caller persists it. */
 async function connect({ clientId, clientSecret, openUrl, store }) {
@@ -50,8 +62,10 @@ async function connect({ clientId, clientSecret, openUrl, store }) {
   await new Promise((ok, no) => { server.once("error", no); server.listen(0, "127.0.0.1", ok); });
   const redirectUri = `http://127.0.0.1:${server.address().port}`;
 
+  let giveUp;
   const codePromise = new Promise((resolve, reject) => {
     server.on("request", (req, res) => {
+      clearTimeout(giveUp); // or a completed connect holds a live timer for 5 more minutes
       const url = new URL(req.url, redirectUri);
       const code = url.searchParams.get("code");
       const error = url.searchParams.get("error");
@@ -63,7 +77,7 @@ async function connect({ clientId, clientSecret, openUrl, store }) {
       server.close();
       error ? reject(new Error(error)) : code ? resolve(code) : reject(new Error("No authorization code came back."));
     });
-    setTimeout(() => { try { server.close(); } catch (e) { /* already closed */ } reject(new Error("Timed out waiting for Google.")); }, 5 * 60 * 1000);
+    giveUp = setTimeout(() => { try { server.close(); } catch (e) { /* already closed */ } reject(new Error("Timed out waiting for Google.")); }, 5 * 60 * 1000);
   });
 
   const params = new URLSearchParams({
@@ -79,14 +93,19 @@ async function connect({ clientId, clientSecret, openUrl, store }) {
   await openUrl(`${AUTH_URL}?${params}`);
 
   const code = await codePromise;
-  const tok = await tokenRequest({
-    code,
-    client_id: clientId,
-    ...(clientSecret ? { client_secret: clientSecret } : {}),
-    redirect_uri: redirectUri,
-    grant_type: "authorization_code",
-    code_verifier: v,
-  });
+  let tok;
+  try {
+    tok = await tokenRequest({
+      code,
+      client_id: clientId,
+      ...(clientSecret ? { client_secret: clientSecret } : {}),
+      redirect_uri: redirectUri,
+      grant_type: "authorization_code",
+      code_verifier: v,
+    });
+  } catch (err) {
+    throw explain(err, clientSecret);
+  }
 
   const saved = {
     refresh_token: tok.refresh_token,
@@ -123,7 +142,7 @@ async function accessToken({ clientId, clientSecret, store }) {
     // which Google does after 7 days while the OAuth client is still in
     // Testing. Nothing but consenting again recovers it, so drop the token
     // rather than leave `status()` claiming a connection that can't fetch.
-    if (err.code !== "invalid_grant") throw err;
+    if (err.code !== "invalid_grant") throw explain(err, clientSecret);
     store.set(null);
     throw new Error("Google sign-in expired — connect again.");
   }

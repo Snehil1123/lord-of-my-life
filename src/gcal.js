@@ -9,8 +9,8 @@
 
 const bridge = () => (typeof window !== "undefined" ? window.lolCal : null);
 
-// The client id ships in the build and is not a secret — PKCE is what protects
-// the exchange. A secret is only sent if the Google client type demands one.
+// Both ship in the build. Neither is really a secret — PKCE is what protects the
+// exchange — but Google's desktop clients reject the exchange without the secret.
 const CONFIG = {
   clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || "",
   clientSecret: import.meta.env.VITE_GOOGLE_CLIENT_SECRET || "",
