@@ -73,6 +73,8 @@ data = {
   categories: [{ id, name, color, group: "work" | "personal" }],
   events: [{ id, title, date: "YYYY-MM-DD", start: "HH:MM", end: "HH:MM", cat? }],
   seededRecurring: true,                 // one-time flag, see "Recurring tasks" below
+  lastRollover: "YYYY-MM-DD",            // last daily sweep, see "Daily rollover" below
+  archive: [task],                       // completed tasks, subtasks still attached
   projects: [{ id, name, color,
                 phases: [{ id, name, start, end, done }],
                 sections?: [{ id, name, color,
@@ -479,6 +481,41 @@ UTC would roll a date over early for anyone west of UTC in the evening (e.g.
 date comparisons, and would have done the same to the recurring-task and
 `pomoLog` "today" checks. Don't reintroduce `toISOString()` for anything
 that means "today" in the user's local time.
+
+## Daily rollover and the archive
+
+`archiveFinished(data)` (right below `resetRecurringTasks`) runs once per day and
+does two things: completed tasks move to `data.archive`, and anything already
+done drops out of `data.sessionQueue`.
+
+- **Gated on `data.lastRollover`, not on each task's `completedDate`.** Per-item
+  dating fails twice: a cloud pull at noon would strip what you finished this
+  morning, and a queued *subtask* stores no completion date, so there'd be
+  nothing to test it against. Once a day, "still checked" is enough.
+- `completedDate !== today` is still checked when archiving, for the app left
+  running past midnight — the sweep fires minutes into the new day and must not
+  take something ticked off just after it. A task with no date at all reads as
+  older work, which is what backfills anything checked before this existed.
+- **Only whole tasks archive, and they keep their subtasks.** A task with some
+  subtasks ticked isn't itself `checked` (that's `deriveFromSubtasks`), so it
+  stays put with its finished subtasks intact. Nothing archives a subtask alone.
+- **Recurring habits are excluded by name, not by ordering.** `hydrate` does run
+  `resetRecurringTasks` first, so they're already unchecked, but archiving one
+  would silently delete the habit — worth the belt and braces.
+- Called from `hydrate` (local load *and* cloud pull) and from the same
+  visibilitychange/focus/5-minute effect in `LordOfMyLife` that reopens habits.
+- **A completed *subtask* queued on its own also leaves the session.** It can't
+  be day-gated for want of a date, so the once-a-day sweep is its only guard —
+  the mild cost is that one ticked off in the minutes after midnight is dropped
+  from the queue. The subtask itself is untouched either way.
+- The archive is read through a collapsed "Archive" disclosure at the bottom of
+  Work and Personal, filtered to that group's categories, newest first. **Reopen
+  puts a task back unchecked, subtasks included** — restoring it as-completed
+  would just archive it again at the next rollover. There's deliberately no
+  delete-forever button; the archive is the safety net for an automatic action.
+- Nothing prunes `data.archive`, so it grows with use and rides along in the
+  synced row. A task record is small enough that this is fine for years; if it
+  ever isn't, cap it here rather than at the call sites.
 
 ## Subtasks
 

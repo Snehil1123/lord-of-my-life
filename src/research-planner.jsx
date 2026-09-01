@@ -110,6 +110,7 @@ const CSS = `
 .fw[data-theme="fantasy"] .gaugesub,
 .fw[data-theme="fantasy"] .todaypomos,
 .fw[data-theme="fantasy"] .aitool{font-size:var(--fsz-mono);}
+.fw[data-theme="fantasy"] .archivetoggle{font-size:15px;}
 .fw[data-theme="fantasy"] .catname{font-size:15px;}
 .fw[data-theme="fantasy"] .tab{font-size:16px;}
 .fw[data-theme="fantasy"] .h2{font-size:26px;}
@@ -563,6 +564,19 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .pickpath{font-size:12.5px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .picksub{font-family:var(--font-mono); font-size:11.5px; color:var(--muted); flex:none;}
 .qparent{color:var(--muted); font-size:12px;}
+.archivebox{margin-top:22px;}
+.archivetoggle{
+  display:flex; align-items:center; gap:8px; width:100%; background:none; border:none;
+  padding:6px 2px; color:var(--muted); font-family:var(--font-display); font-weight:700;
+  font-size:13px; text-transform:uppercase; letter-spacing:.08em;
+}
+.archivetoggle:hover{color:var(--ink);}
+.archrow{
+  display:flex; align-items:center; gap:10px; padding:9px 14px;
+  border-bottom:1px solid var(--line); color:var(--muted);
+}
+.archrow:last-child{border-bottom:none;}
+.archrow .tasktitle{text-decoration:line-through; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .qfoot{
   margin-top:16px; border-top:1px solid var(--line); padding-top:14px;
   display:flex; gap:22px; justify-content:center; flex-wrap:wrap;
@@ -965,6 +979,45 @@ function resetRecurringTasks(data) {
   return changed ? { ...data, tasks } : data;
 }
 
+/* On a new day, work finished on an earlier day stops cluttering today's lists:
+   completed tasks move to data.archive, and anything already done drops out of
+   the session queue.
+
+   Gated on data.lastRollover rather than on each task's own completedDate, so it
+   sweeps exactly once per day. Per-item dating would be wrong twice over: a
+   cloud pull at noon would strip what you finished this morning, and a queued
+   *subtask* records no completion date at all, so there'd be nothing to test it
+   against. Once a day, "still checked" is enough — it can only be older work.
+
+   Only whole tasks archive. A task with some subtasks ticked isn't itself
+   checked (deriveFromSubtasks sees to that), so it stays put and keeps every
+   subtask, finished ones included. Recurring habits are excluded outright rather
+   than by ordering: archiving one would quietly delete the habit. */
+function archiveFinished(data) {
+  const today = dateKey(new Date());
+  if (data.lastRollover === today) return data;
+
+  // completedDate is still checked, for the app left running across midnight:
+  // the sweep fires minutes into the new day and must not take something ticked
+  // off just after it. A legacy task with no date at all reads as older work.
+  const stale = (t) => t.checked && !t.recurring && t.completedDate !== today;
+  const going = data.tasks.filter(stale);
+  const queue = data.sessionQueue || [];
+  const keep = queue.filter((qid) => {
+    const q = resolveQueued(qid, data.tasks, data.settings.work);
+    if (!q) return false;
+    if (!q.item.checked) return true;
+    return !q.sub && q.task.completedDate === today;
+  });
+  return {
+    ...data,
+    lastRollover: today,
+    tasks: data.tasks.filter((t) => !stale(t)),
+    archive: [...(data.archive || []), ...going],
+    sessionQueue: keep,
+  };
+}
+
 /* ---------------- storage ---------------- */
 const KEY = "lordofmylife:data";
 function loadData() {
@@ -981,8 +1034,10 @@ function saveData(data) {
 // Backfills missing fields (recurring seeds, budget) and reopens recurring tasks.
 // Applied to local loads AND cloud pulls — a cloud row can predate a field that was
 // added after sync already existed, so this can't just run once on initial load.
+// resetRecurringTasks runs first so a habit is already reopened, and unchecked,
+// by the time the sweep looks at it.
 function hydrate(d) {
-  return resetRecurringTasks(ensureCatSeed(ensureBudgetSeed(ensureRecurringSeeds(d))));
+  return archiveFinished(resetRecurringTasks(ensureCatSeed(ensureBudgetSeed(ensureRecurringSeeds(d)))));
 }
 
 // Assistant panel width — a per-device UI preference like the theme, not synced data.
@@ -1038,7 +1093,7 @@ export default function LordOfMyLife() {
 
   // catch day rollover while the app stays open: on refocus and every few minutes
   useEffect(() => {
-    const check = () => setData((d) => resetRecurringTasks(d));
+    const check = () => setData((d) => archiveFinished(resetRecurringTasks(d)));
     document.addEventListener("visibilitychange", check);
     window.addEventListener("focus", check);
     const interval = setInterval(check, 5 * 60 * 1000);
@@ -2219,6 +2274,7 @@ function CalendarPanel({ data, events, now, plan, setWidth, onClose }) {
 function TaskGroupView({ data, setData, now, group, title, sessionEmoji }) {
   const [burst, setBurst] = useState(null); // task id currently bursting
   const [newCat, setNewCat] = useState("");
+  const [showArchive, setShowArchive] = useState(false);
   // the dragged id lives in a ref, not state: the drop handler needs it synchronously
   // and must not depend on a re-render having landed between dragstart and drop
   const dragRef = useRef(null);
@@ -2271,6 +2327,28 @@ function TaskGroupView({ data, setData, now, group, title, sessionEmoji }) {
   const toggleSub = (id, subId) => toggleSubtask(data, setData, id, subId, setBurst);
   const delSub = (id, subId) => delSubtask(data, setData, id, subId, setBurst);
   const editSub = (id, subId, patch) => editSubtask(data, setData, id, subId, patch, setBurst);
+
+  // newest first — the reason to open the archive is nearly always something
+  // finished recently
+  const archived = (data.archive || [])
+    .filter((t) => cats.some((c) => c.id === t.cat))
+    .slice()
+    .reverse();
+  /* Reopen puts it back unchecked rather than restoring it as-completed, which
+     would simply archive itself again at the next rollover. Subtasks come back
+     unchecked too, or the parent would re-derive straight to checked. */
+  const reopenArchived = (id) => {
+    const t = (data.archive || []).find((x) => x.id === id);
+    if (!t) return;
+    setData({
+      ...data,
+      archive: (data.archive || []).filter((x) => x.id !== id),
+      tasks: [...data.tasks, {
+        ...t, checked: false, done: 0, completedDate: null,
+        subtasks: (t.subtasks || []).map((sb) => ({ ...sb, checked: false })),
+      }],
+    });
+  };
 
   const addCat = () => {
     const name = newCat.trim();
@@ -2371,6 +2449,36 @@ function TaskGroupView({ data, setData, now, group, title, sessionEmoji }) {
           value={newCat} onChange={(e) => setNewCat(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addCat()} />
         <button className="btn" onClick={addCat}>Add section</button>
       </div>
+
+      {archived.length > 0 && (
+        <div className="archivebox">
+          <button className="archivetoggle" onClick={() => setShowArchive((v) => !v)}>
+            {showArchive ? "▾" : "▸"} Archive
+            <span className="catcount">{archived.length}</span>
+          </button>
+          {showArchive && (
+            <div className="card">
+              {archived.map((t) => {
+                const c = cats.find((x) => x.id === t.cat);
+                const subs = t.subtasks || [];
+                return (
+                  <div key={t.id} className="archrow">
+                    <span className="tasktitle">{t.title}</span>
+                    {subs.length > 0 && (
+                      <span className="subprogress">{subs.length} subtask{subs.length === 1 ? "" : "s"}</span>
+                    )}
+                    <span style={{ flex: 1 }} />
+                    {c && <span className="pickcat" style={{ color: c.color, padding: 0 }}>{c.name}</span>}
+                    <span className="tagdue">{t.completedDate ? fmtDue(t.completedDate) : "—"}</span>
+                    <button className="btn ghost" title="Put it back in its section, unchecked"
+                      onClick={() => reopenArchived(t.id)}>Reopen</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
