@@ -56,8 +56,9 @@ async function check({ appPath }) {
     // a dirty tree can't be fast-forwarded, so say so up front rather than
     // letting the pull fail halfway through the update
     const dirty = (await git(cwd, ["status", "--porcelain"])) !== "";
-    const subject = behind > 0 ? await git(cwd, ["log", "-1", "--pretty=%s", upstream]) : "";
-    return { ok: true, behind, dirty, branch, upstream, subject };
+    const head = await git(cwd, ["rev-parse", "HEAD"]);
+    const subject = await git(cwd, ["log", "-1", "--pretty=%s", behind > 0 ? upstream : "HEAD"]);
+    return { ok: true, behind, dirty, branch, upstream, subject, head };
   } catch (e) {
     return { ok: false, reason: e.message };
   }

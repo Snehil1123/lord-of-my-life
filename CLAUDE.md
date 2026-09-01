@@ -904,6 +904,17 @@ the rebuild, [src/update.js](src/update.js) is the renderer seam, `UpdatePill` i
   quits ~500ms later; the script waits for that pid, then pulls, installs,
   builds, rewrites the shortcuts and relaunches. Its console window is the
   progress UI, since by then there's no window left.
+- **Two things count as out of date, and the second is the common one.** The
+  remote can be ahead of the checkout, *or* the checkout can be ahead of this
+  build. Commits usually land locally and get pushed in the same breath, so HEAD
+  matches `origin/main` while `release/win-unpacked` is older than both —
+  comparing against the remote alone would sit there silently forever.
+  `vite.config.js` stamps the build's commit in as `__BUILD_COMMIT__` (empty
+  outside a checkout, which just disables that half), and `check()` returns
+  `head` for it to be compared against.
+- **A dirty tree only blocks the first case.** A plain rebuild over local edits
+  is exactly what `npm run app:install` already does, so blocking it would be
+  wrong; a pull genuinely can't fast-forward, so that one is disabled.
 - `repoRoot()` **walks up** looking for `.git` + `package.json` rather than
   counting `..`: in dev the app path is the repo, in an unpacked build it's four
   levels below it, and walking handles both without branching.

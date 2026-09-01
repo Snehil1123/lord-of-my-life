@@ -1270,9 +1270,18 @@ function UpdatePill() {
     return () => { clearTimeout(first); clearInterval(id); window.removeEventListener("focus", onFocus); };
   }, []);
 
-  // nothing to say unless there's actually something to install; a failed check
-  // stays quiet rather than nagging about git in the corner of a planner
-  if (!state?.ok || !state.behind) return null;
+  /* Two ways to be out of date, and the second is the common one here: the
+     remote is ahead of the checkout, or the checkout is ahead of this build.
+     Commits usually land locally and are pushed in the same breath, so HEAD
+     matches the remote while release/win-unpacked is older than both — checking
+     only the remote would never fire. A failed check stays quiet rather than
+     nagging about git in the corner of a planner. */
+  const built = typeof __BUILD_COMMIT__ === "string" ? __BUILD_COMMIT__ : "";
+  const rebuildOnly = !state?.behind && !!built && !!state?.head && state.head !== built;
+  if (!state?.ok || (!state.behind && !rebuildOnly)) return null;
+  // only a pull can be blocked by local edits; a plain rebuild is exactly what
+  // `npm run app:install` does with them in place
+  const blocked = state.dirty && state.behind > 0;
 
   const start = async () => {
     setBusy(true);
@@ -1283,17 +1292,18 @@ function UpdatePill() {
 
   return (
     <div className="updwrap">
-      <button className="updpill" onClick={() => setOpen((v) => !v)}
-        title={`${state.behind} update${state.behind === 1 ? "" : "s"} available`}>
+      <button className="updpill" onClick={() => setOpen((v) => !v)} title="An update is ready to install">
         ⟳ Update
       </button>
       {open && (
         <div className="updpanel">
           <div className="updhead">
-            {state.behind} new commit{state.behind === 1 ? "" : "s"} on {state.upstream}
+            {rebuildOnly
+              ? "This build is behind your checkout"
+              : `${state.behind} new commit${state.behind === 1 ? "" : "s"} on ${state.upstream}`}
           </div>
           {state.subject && <div className="updsubject">{state.subject}</div>}
-          {state.dirty ? (
+          {blocked ? (
             <div className="updwarn">
               This checkout has uncommitted changes, so it can't fast-forward.
               Commit or stash them first.
@@ -1307,7 +1317,7 @@ function UpdatePill() {
           {state.failed && <div className="updwarn">{state.failed}</div>}
           <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
             <button className="btn primary" style={{ marginLeft: "auto" }}
-              disabled={state.dirty || busy} onClick={start}>
+              disabled={blocked || busy} onClick={start}>
               {busy ? "Updating…" : "Update & restart"}
             </button>
             <button className="btn ghost" onClick={() => setOpen(false)}>Later</button>
