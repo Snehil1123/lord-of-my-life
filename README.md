@@ -69,8 +69,12 @@ npm run app:install
 ```
 
 The result lives in `release/win-unpacked/` (about 660 MB, most of it the Agent
-SDK's runtime) and runs standalone — no Vite, no terminal. Re-run the command
-after pulling changes to pick them up.
+SDK's runtime) and runs standalone — no Vite, no terminal.
+
+After that you don't need the command again: when the checkout is behind its
+remote, an **Update** pill appears in the app's header. It quits the app,
+rebuilds it in a terminal window, and reopens it. It won't offer to update over
+uncommitted changes, and if a build fails nothing is replaced.
 
 Worth knowing: a build you make yourself isn't subject to the Smart App Control
 block that stops the downloaded installer, because it never carried a

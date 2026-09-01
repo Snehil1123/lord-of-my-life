@@ -15,8 +15,8 @@ This is intentionally a **single-file React app**: nearly all UI, state, and
 styling lives in [src/research-planner.jsx](src/research-planner.jsx). `src/main.jsx` just mounts it.
 Don't split it into multiple files/components unless the user asks — the whole
 point is that one file is the source of truth for the whole app. The only
-carve-outs in `src/` are the two remote-service layers, `sync.js` and `ai.js`,
-which own network/IPC calls and nothing else. (The AI assistant's agent loop
+carve-outs in `src/` are the network/IPC seams — `sync.js`, `ai.js`, `gcal.js`
+and `update.js` — which own remote and main-process calls and nothing else. (The AI assistant's agent loop
 additionally lives under `electron/` because it has to run in the main
 process — see "AI assistant".)
 
@@ -881,6 +881,44 @@ surface the renderer gets is [electron/preload.cjs](electron/preload.cjs) (see "
   project directory) is running while you `electron-builder` package the app,
   the file watcher can hold a handle inside `release/win-unpacked.tmp` and
   the final rename fails with `EPERM`. Stop the dev server before packaging.
+
+## In-app update
+
+A pill in the header when the checkout the app runs from is behind its upstream;
+opening it offers "Update & restart", which quits the app, rebuilds it, and
+reopens it. [electron/updater.cjs](electron/updater.cjs) does the git work, [scripts/update.ps1](scripts/update.ps1) does
+the rebuild, [src/update.js](src/update.js) is the renderer seam, `UpdatePill` is the UI.
+
+- **This is deliberately not `electron-updater`.** That updates the *installed*
+  app: it runs the NSIS installer, which lands in `AppData\Local\Programs` — a
+  different directory from the `release/win-unpacked` build this machine
+  actually runs, so it would leave two copies and keep launching the stale one.
+  The installer is also the exact artifact Smart App Control refuses, being
+  downloaded and unsigned. If the app is ever code-signed and distributed by
+  installer, `electron-updater` becomes the right answer for *other people* and
+  can sit alongside this.
+- **The rebuild cannot happen in-process.** The running exe is inside the
+  directory electron-builder replaces, and Windows won't overwrite it while it's
+  open — the `EPERM` in "Known gotcha" above, from the other direction. So
+  `run()` spawns a detached PowerShell script with this process's pid, and main
+  quits ~500ms later; the script waits for that pid, then pulls, installs,
+  builds, rewrites the shortcuts and relaunches. Its console window is the
+  progress UI, since by then there's no window left.
+- `repoRoot()` **walks up** looking for `.git` + `package.json` rather than
+  counting `..`: in dev the app path is the repo, in an unpacked build it's four
+  levels below it, and walking handles both without branching.
+- **A dirty tree is detected during the check**, not discovered halfway through
+  a failed pull — it disables the button and says why. The pull is `--ff-only`
+  for the same reason.
+- The check is a `git fetch`, polled on a 30-minute interval and on refocus.
+  **A failed check renders nothing**: if git is missing, or the app isn't in a
+  checkout, or the network is down, the pill just doesn't appear. A planner
+  shouldn't nag about git.
+- `npm install`, not `npm ci`, in the script — `ci` wipes `node_modules` and
+  would redownload the Agent SDK's ~300MB runtime on every single update.
+- If any step fails the script says so, notes that nothing was replaced, and
+  reopens the version you had. `--dir` builds to a temp directory and renames,
+  so a failed build leaves the previous one intact.
 
 ## Conventions
 
