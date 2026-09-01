@@ -915,6 +915,24 @@ the rebuild, [src/update.js](src/update.js) is the renderer seam, `UpdatePill` i
   downloaded and unsigned. If the app is ever code-signed and distributed by
   installer, `electron-updater` becomes the right answer for *other people* and
   can sit alongside this.
+- **The helper is launched with `cmd /c start`, and both halves of that matter.**
+  Node's `detached: true` sets `DETACHED_PROCESS` on Windows, which gives the
+  child no console — and `powershell.exe` needs one, so it exits before running a
+  single line, silently, because stdio is ignored. A child spawned *without*
+  `detached` runs but is killed when the app quits, which is the one thing it
+  exists to outlive. `start` gives it a fresh console (which doubles as the
+  progress window) and leaves it independent. cmd re-parses the command line and
+  the exe path contains spaces, so that round trip is covered by a test.
+  **Testing the script by running it directly proves nothing about this** — that
+  is exactly how the bug shipped.
+- The script writes a transcript to `release/update.log`, because a console that
+  closes with the window leaves nothing to diagnose a failed update with.
+- **Build after committing, never before.** `__BUILD_COMMIT__` is `git rev-parse
+  HEAD` at build time while the build's *content* comes from the working tree, so
+  building first and committing second stamps the parent commit and the pill
+  lights up claiming a change the build already contains. The update script gets
+  this right for free (it pulls, then builds); only hand-runs of
+  `npm run app:install` can get it wrong.
 - **The rebuild cannot happen in-process.** The running exe is inside the
   directory electron-builder replaces, and Windows won't overwrite it while it's
   open — the `EPERM` in "Known gotcha" above, from the other direction. So

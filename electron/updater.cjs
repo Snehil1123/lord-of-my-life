@@ -69,11 +69,18 @@ function run({ appPath, exePath, pid }) {
   if (!cwd) return { started: false, reason: "No checkout to update from." };
   const script = path.join(cwd, "scripts", "update.ps1");
   if (!fs.existsSync(script)) return { started: false, reason: "scripts/update.ps1 is missing." };
-  // detached so it outlives the quit that follows; its own console is where the
-  // pull and build report progress, since by then there's no window left
+  /* Launched through `cmd /c start`, which is load-bearing in two ways that a
+     plain detached spawn is not. Node's `detached` sets DETACHED_PROCESS on
+     Windows, and powershell.exe needs a console — without one it exits
+     immediately without running a line of the script, silently. And a child
+     spawned *without* detached dies with the app it was told to outlive. `start`
+     gives it a fresh console (which is also the progress window) and leaves it
+     independent of this process. cmd re-parses the command line, and the exe
+     path contains spaces, so that round trip is verified in the tests. */
   const child = spawn(
-    "powershell",
-    ["-ExecutionPolicy", "Bypass", "-NoProfile", "-File", script,
+    "cmd.exe",
+    ["/c", "start", "", "powershell",
+      "-ExecutionPolicy", "Bypass", "-NoProfile", "-File", script,
       "-Repo", cwd, "-Exe", exePath, "-WaitPid", String(pid)],
     { cwd, detached: true, stdio: "ignore", windowsHide: false },
   );

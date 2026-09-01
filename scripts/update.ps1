@@ -9,8 +9,13 @@ param(
 # open — so the app can't do this to itself, and this waits for it to go first.
 
 $ErrorActionPreference = 'Stop'
-$host.UI.RawUI.WindowTitle = 'Lord of My Life - updating'
+try { $host.UI.RawUI.WindowTitle = 'Lord of My Life - updating' } catch { }
 Set-Location $Repo
+
+# A transcript, because the console goes away with the window and a failed update
+# would otherwise leave nothing to look at. release/ is gitignored.
+$log = Join-Path $Repo 'release\update.log'
+try { Start-Transcript -Path $log -Force | Out-Null } catch { }
 
 Write-Host 'Lord of My Life' -ForegroundColor Cyan
 Write-Host 'Updating from git. This window closes itself when the app reopens.'
@@ -45,12 +50,15 @@ try {
 
   Write-Host ''
   Write-Host 'Updated. Starting the app...' -ForegroundColor Green
+  try { Stop-Transcript | Out-Null } catch { }
   Start-Process $Exe
 } catch {
   Write-Host ''
   Write-Host "Update failed: $_" -ForegroundColor Red
   Write-Host 'Nothing was replaced, so the version you had is still there.'
+  Write-Host "A full log is at $log"
   Write-Host 'Press Enter to reopen it.'
+  try { Stop-Transcript | Out-Null } catch { }
   Read-Host | Out-Null
   if (Test-Path $Exe) { Start-Process $Exe }
 }
