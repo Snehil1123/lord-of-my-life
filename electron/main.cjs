@@ -3,6 +3,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 const { runAgentQuery, interruptAgent } = require("./agent.cjs");
 const gcal = require("./gcal.cjs");
+const updater = require("./updater.cjs");
 
 const isDev = !app.isPackaged;
 
@@ -119,3 +120,13 @@ ipcMain.handle("gcal:list", async (_e, cfg) => {
 });
 ipcMain.handle("gcal:status", () => gcal.status({ store }));
 ipcMain.handle("gcal:disconnect", () => gcal.disconnect({ store }));
+
+ipcMain.handle("update:check", () => updater.check({ appPath: app.getAppPath() }));
+/* Quit only once the helper is actually running, and a beat later so the reply
+   reaches the renderer first. The helper waits on this pid, so quitting before
+   it exists would leave it waiting on nothing. */
+ipcMain.handle("update:run", () => {
+  const res = updater.run({ appPath: app.getAppPath(), exePath: app.getPath("exe"), pid: process.pid });
+  if (res.started) setTimeout(() => app.quit(), 500);
+  return res;
+});

@@ -35,3 +35,11 @@ contextBridge.exposeInMainWorld("lolCal", {
   status: () => ipcRenderer.invoke("gcal:status"),
   disconnect: () => ipcRenderer.invoke("gcal:disconnect"),
 });
+
+/* Update: ask whether the checkout is behind, and ask to update. Both are
+   fixed operations — the renderer names no path and runs no command. */
+contextBridge.exposeInMainWorld("lolUpdate", {
+  available: true,
+  check: () => ipcRenderer.invoke("update:check"),
+  run: () => ipcRenderer.invoke("update:run"),
+});

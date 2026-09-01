@@ -6,6 +6,7 @@ import {
 } from "./sync.js";
 import { agentAvailable, onToolCall, onEvent, runQuery, cancelQuery } from "./ai.js";
 import { calAvailable, calConfigured, calStatus, calConnect, calDisconnect, calFetch } from "./gcal.js";
+import { updaterAvailable, checkForUpdate, runUpdate } from "./update.js";
 
 /* ============================================================
    LORD OF MY LIFE — one planner for the whole research pipeline
@@ -89,6 +90,10 @@ const CSS = `
 .fw[data-theme="fantasy"] .qadd,
 .fw[data-theme="fantasy"] .subtasktitle,
 .fw[data-theme="fantasy"] .pickpath,
+.fw[data-theme="fantasy"] .updpill,
+.fw[data-theme="fantasy"] .updnote,
+.fw[data-theme="fantasy"] .updwarn,
+.fw[data-theme="fantasy"] .updsubject,
 .fw[data-theme="fantasy"] .qparent,
 .fw[data-theme="fantasy"] .presetlog{font-size:var(--fsz-meta);}
 /* every mono run, so a row's annotations all match each other and sit below its title */
@@ -564,6 +569,22 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .pickpath{font-size:12.5px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .picksub{font-family:var(--font-mono); font-size:11.5px; color:var(--muted); flex:none;}
 .qparent{color:var(--muted); font-size:12px;}
+.updwrap{position:relative;}
+.updpill{
+  display:flex; align-items:center; gap:6px; border:1px solid var(--pine);
+  background:var(--pine); color:#fff; border-radius:999px; padding:5px 12px;
+  font-size:13px; font-weight:600;
+}
+.updpill:hover{filter:brightness(1.08);}
+.updpanel{
+  position:absolute; right:0; top:calc(100% + 8px); z-index:20; width:290px;
+  border:1px solid var(--line); border-radius:var(--radius); background:var(--card);
+  padding:12px; box-shadow:0 12px 32px rgba(0,0,0,.35);
+}
+.updhead{font-family:var(--font-display); font-weight:700; font-size:14px;}
+.updsubject{font-size:12.5px; color:var(--muted); margin-top:4px;}
+.updnote{font-size:12.5px; color:var(--muted); margin-top:8px; line-height:1.45;}
+.updwarn{font-size:12.5px; color:var(--amber); margin-top:8px; line-height:1.45;}
 .archivebox{margin-top:22px;}
 .archivetoggle{
   display:flex; align-items:center; gap:8px; width:100%; background:none; border:none;
@@ -1161,6 +1182,7 @@ export default function LordOfMyLife() {
           <button className="btn ghost" title="Show today's calendar" onClick={() => setCalOpen(true)}>▤ Today</button>
         )}
         {!aiOpen && <button className="btn ghost" title={`Open the ${assistantLabel.toLowerCase()}`} onClick={() => setAiOpen(true)}>✦ {assistantLabel}</button>}
+        <UpdatePill />
         <SyncBar data={data} setData={setData} />
       </header>
       {calOpen && view !== "calendar" && (
@@ -1227,6 +1249,75 @@ function FantasyScene() {
 }
 
 /* ================= CLOUD SYNC ================= */
+/* The header's update affordance. Absent entirely unless the app is running out
+   of a checkout of its own repo, which is the only shape this updater can serve
+   — see electron/updater.cjs for why that's the shape we're in.
+
+   Polled on a long interval and on refocus rather than pushed: it's a `git
+   fetch`, and there's nothing to push from. */
+function UpdatePill() {
+  const [state, setState] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!updaterAvailable()) return;
+    const look = () => checkForUpdate().then(setState).catch(() => {});
+    const first = setTimeout(look, 4000); // let the window settle before a network call
+    const id = setInterval(look, 30 * 60 * 1000);
+    const onFocus = () => look();
+    window.addEventListener("focus", onFocus);
+    return () => { clearTimeout(first); clearInterval(id); window.removeEventListener("focus", onFocus); };
+  }, []);
+
+  // nothing to say unless there's actually something to install; a failed check
+  // stays quiet rather than nagging about git in the corner of a planner
+  if (!state?.ok || !state.behind) return null;
+
+  const start = async () => {
+    setBusy(true);
+    const res = await runUpdate();
+    if (!res?.started) { setBusy(false); setState({ ...state, failed: res?.reason || "Couldn't start the update." }); }
+    // on success the app is quitting; leave the button showing "Updating…"
+  };
+
+  return (
+    <div className="updwrap">
+      <button className="updpill" onClick={() => setOpen((v) => !v)}
+        title={`${state.behind} update${state.behind === 1 ? "" : "s"} available`}>
+        ⟳ Update
+      </button>
+      {open && (
+        <div className="updpanel">
+          <div className="updhead">
+            {state.behind} new commit{state.behind === 1 ? "" : "s"} on {state.upstream}
+          </div>
+          {state.subject && <div className="updsubject">{state.subject}</div>}
+          {state.dirty ? (
+            <div className="updwarn">
+              This checkout has uncommitted changes, so it can't fast-forward.
+              Commit or stash them first.
+            </div>
+          ) : (
+            <div className="updnote">
+              The app will close, rebuild itself in a terminal window, and reopen.
+              Takes a minute or so.
+            </div>
+          )}
+          {state.failed && <div className="updwarn">{state.failed}</div>}
+          <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+            <button className="btn primary" style={{ marginLeft: "auto" }}
+              disabled={state.dirty || busy} onClick={start}>
+              {busy ? "Updating…" : "Update & restart"}
+            </button>
+            <button className="btn ghost" onClick={() => setOpen(false)}>Later</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SyncBar({ data, setData }) {
   const [session, setSession] = useState(null);
   const [status, setStatus] = useState("offline"); // offline | connecting | synced | error
