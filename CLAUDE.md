@@ -30,8 +30,17 @@ process — see "AI assistant".)
 - **All state flows through one `data` object** (`{ settings, pomoLog,
   projects, tasks }`), held in `useState` in the top-level `LordOfMyLife`
   component and passed down as `data` / `setData` props. There is no
-  Redux/Context — view components mutate by calling `setData({ ...data, ... })`.
-  Keep it that way; don't introduce a state library for this app's size.
+  Redux/Context; don't introduce a state library for this app's size.
+- **Every write must use the updater form — `setData((prev) => ({ ...prev, … }))`,
+  never `setData({ ...data, … })`.** `data` is the value captured when the row
+  last rendered. Two edits landing before React commits a re-render both build
+  from that same snapshot, and the second silently discards the first: check
+  four tasks off quickly and three come back unticked. It is not a sync bug and
+  it happens signed out. Derive from `prev` inside the callback too — a `const`
+  computed from `data` above the call carries the stale snapshot in with it.
+  Where an id or trimmed string is needed, compute it *before* the callback and
+  close over it, so the updater stays pure and re-running it can't mint a second
+  id.
 - **Persistence**: `loadData()` / `saveData()` read/write `localStorage` under
   key `lordofmylife:data`, debounced 500ms after `data` changes. No export/
   import — removed as unnecessary once cloud sync existed.
@@ -725,6 +734,15 @@ realtime subscription).
 - `skipNextPush` in `SyncBar` exists to stop a remote-applied update from
   immediately bouncing back to the server as if it were a local edit. Keep
   that guard if you touch the push/pull effects.
+- **A device ignores its own writes coming back down the realtime channel.**
+  Postgres changes are broadcast to every subscriber including the author, so
+  `pushCloudData` stamps `_client` (a per-tab id) inside the JSONB blob and
+  `subscribeToCloudData` drops any payload carrying it. Without that, your own
+  push lands back on you ~600ms later and overwrites anything edited in the
+  meantime — which looks exactly like a task un-completing itself just after you
+  tick it. `_client` is transport bookkeeping and is stripped on the way in, so
+  it never reaches `data` or localStorage. Note this only suppresses *self*
+  echo; genuine concurrent editing on two devices is still last-write-wins.
 
 ## Theming
 

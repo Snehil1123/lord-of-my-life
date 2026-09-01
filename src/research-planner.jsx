@@ -1425,13 +1425,14 @@ function GanttView({ data, setData, now }) {
 
   const addProject = () => {
     if (!name.trim()) return;
-    setData({
-      ...data,
-      projects: [...data.projects, { id: uid(), name: name.trim(), color: PROJ_COLORS[data.projects.length % PROJ_COLORS.length], phases: [] }],
-    });
+    const id = uid(), label = name.trim();
+    setData((prev) => ({
+      ...prev,
+      projects: [...prev.projects, { id, name: label, color: PROJ_COLORS[prev.projects.length % PROJ_COLORS.length], phases: [] }],
+    }));
     setName("");
   };
-  const delProject = (id) => setData({ ...data, projects: data.projects.filter((p) => p.id !== id) });
+  const delProject = (id) => setData((prev) => ({ ...prev, projects: prev.projects.filter((p) => p.id !== id) }));
 
   return (
     <div>
@@ -1520,7 +1521,7 @@ function ProjectGantt({ project, data, setData, onDelete, now }) {
   const [secName, setSecName] = useState("");
 
   const sections = project.sections || [];
-  const update = (proj) => setData({ ...data, projects: data.projects.map((p) => (p.id === proj.id ? proj : p)) });
+  const update = (proj) => setData((prev) => ({ ...prev, projects: prev.projects.map((p) => (p.id === proj.id ? proj : p)) }));
   const sectionTasks = (secId) => data.tasks.filter((t) => t.sectionId === secId && t.dueDate);
 
   const addPhase = () => {
@@ -1547,20 +1548,21 @@ function ProjectGantt({ project, data, setData, onDelete, now }) {
   const updateSection = (id, fn) => update({ ...project, sections: sections.map((s) => (s.id === id ? fn(s) : s)) });
   // one setData, not two — deleting the section and unlinking its tasks are the
   // same edit, and a second setData off the same `data` would discard the first
-  const delSection = (id) => setData({
-    ...data,
-    projects: data.projects.map((p) => (p.id === project.id ? { ...p, sections: sections.filter((s) => s.id !== id) } : p)),
-    tasks: data.tasks.map((t) => (t.sectionId === id ? { ...t, sectionId: null } : t)),
-  });
+  const delSection = (id) => setData((prev) => ({
+    ...prev,
+    projects: prev.projects.map((p) => (p.id === project.id
+      ? { ...p, sections: (p.sections || []).filter((s) => s.id !== id) } : p)),
+    tasks: prev.tasks.map((t) => (t.sectionId === id ? { ...t, sectionId: null } : t)),
+  }));
   const addSectionPhase = (secId, p) => updateSection(secId, (s) => ({ ...s, phases: [...s.phases, { id: uid(), ...p, done: false }] }));
   const toggleSecPhase = (secId, id) => updateSection(secId, (s) => ({ ...s, phases: s.phases.map((x) => (x.id === id ? { ...x, done: !x.done } : x)) }));
   const delSecPhase = (secId, id) => updateSection(secId, (s) => ({ ...s, phases: s.phases.filter((x) => x.id !== id) }));
   const addSectionTask = (secId, { title, minutes, dueDate, cat }) => {
-    const est = estFor(minutes, data.settings.work);
-    setData({ ...data, tasks: [...data.tasks, {
-      id: uid(), title, cat, minutes, est, done: 0, checked: false,
+    const id = uid();
+    setData((prev) => ({ ...prev, tasks: [...prev.tasks, {
+      id, title, cat, minutes, est: estFor(minutes, prev.settings.work), done: 0, checked: false,
       oneOnOne: false, dueDate, sectionId: secId,
-    }] });
+    }] }));
   };
 
   // One shared timeline across ungrouped phases, every section's phases, and
@@ -1891,15 +1893,15 @@ function TaskRow({ t, burst, onToggle, onToggleAll, onDelete, onEdit, onAddSubta
 // current focus-session length), clamps done so it never exceeds the new est. A task with
 // subtasks only ever sends a title-only patch (minutes/dueDate follow the subtasks).
 function editTask(data, setData, id, patch) {
-  setData({
-    ...data,
-    tasks: data.tasks.map((x) => {
+  setData((prev) => ({
+    ...prev,
+    tasks: prev.tasks.map((x) => {
       if (x.id !== id) return x;
       if (patch.minutes === undefined) return { ...x, title: patch.title };
-      const est = estFor(patch.minutes, data.settings.work);
+      const est = estFor(patch.minutes, prev.settings.work);
       return { ...x, title: patch.title, minutes: patch.minutes, dueDate: patch.dueDate, est, done: Math.min(x.done, est) };
     }),
-  });
+  }));
 }
 
 /* The completion flourish. `burst` is {id, kind} rather than a bare id because
@@ -1921,12 +1923,12 @@ function fireBurst(setBurst, id, kind) {
 // shared by WorkView/PersonalView — stamps completedDate so recurring tasks know when they were last finished
 function toggleTask(data, setData, t, setBurst) {
   const nowChecked = !t.checked;
-  setData({
-    ...data,
-    tasks: data.tasks.map((x) => (x.id === t.id
+  setData((prev) => ({
+    ...prev,
+    tasks: prev.tasks.map((x) => (x.id === t.id
       ? { ...x, checked: nowChecked, completedDate: nowChecked ? dateKey(new Date()) : x.completedDate }
       : x)),
-  });
+  }));
   fireBurst(setBurst, t.id, nowChecked ? "done" : "undone");
 }
 
@@ -1948,17 +1950,25 @@ function deriveFromSubtasks(t, sessionMin) {
 // and fires the same completion burst/completedDate stamp as toggleTask when the parent
 // transitions to fully done as a side effect (e.g. checking the last remaining subtask).
 function updateSubtasks(data, setData, taskId, fn, setBurst) {
-  const task = data.tasks.find((t) => t.id === taskId);
-  const wasChecked = task.checked;
-  let updated = deriveFromSubtasks(fn(task), data.settings.work);
-  if (!wasChecked && updated.checked) {
-    updated = { ...updated, completedDate: dateKey(new Date()) };
-    fireBurst(setBurst, taskId, "done");
-  } else if (wasChecked && !updated.checked) {
+  /* The animation is decided from the row the user just clicked, the data from
+     the latest state. Keeping them apart matters: a state updater has to stay
+     pure (React may run it more than once), and the two can only disagree in a
+     race, where one wrong animation frame beats a lost edit. */
+  const seen = data.tasks.find((t) => t.id === taskId);
+  if (seen) {
+    const preview = deriveFromSubtasks(fn(seen), data.settings.work);
+    if (!seen.checked && preview.checked) fireBurst(setBurst, taskId, "done");
     // unchecking a subtask reopens the parent — heal it, same as unchecking it directly
-    fireBurst(setBurst, taskId, "undone");
+    else if (seen.checked && !preview.checked) fireBurst(setBurst, taskId, "undone");
   }
-  setData({ ...data, tasks: data.tasks.map((t) => (t.id === taskId ? updated : t)) });
+  setData((prev) => ({
+    ...prev,
+    tasks: prev.tasks.map((t) => {
+      if (t.id !== taskId) return t;
+      const next = deriveFromSubtasks(fn(t), prev.settings.work);
+      return !t.checked && next.checked ? { ...next, completedDate: dateKey(new Date()) } : next;
+    }),
+  }));
 }
 const addSubtask = (data, setData, taskId, title, minutes, dueDate, setBurst) => updateSubtasks(
   data, setData, taskId,
@@ -1984,6 +1994,7 @@ const editSubtask = (data, setData, taskId, subId, patch, setBurst) => updateSub
 // clicking the parent checkbox on a task with subtasks checks/unchecks all of them at once
 const toggleAllSubtasks = (data, setData, taskId, setBurst) => {
   const task = data.tasks.find((t) => t.id === taskId);
+  if (!task) return;
   const target = !task.checked;
   updateSubtasks(data, setData, taskId, (t) => ({ ...t, subtasks: t.subtasks.map((s) => ({ ...s, checked: target })) }), setBurst);
 };
@@ -2222,10 +2233,11 @@ function CalendarView({ data, setData, now, plan, events, gcal }) {
 
   const addEvent = () => {
     if (!form.title.trim() || !form.date || timeToMin(form.end) <= timeToMin(form.start)) return;
-    setData({ ...data, events: [...mine, { id: uid(), ...form, title: form.title.trim() }] });
+    const ev = { id: uid(), ...form, title: form.title.trim() };
+    setData((prev) => ({ ...prev, events: [...(prev.events || []), ev] }));
     setForm({ ...form, title: "" });
   };
-  const delEvent = (id) => setData({ ...data, events: mine.filter((e) => e.id !== id) });
+  const delEvent = (id) => setData((prev) => ({ ...prev, events: (prev.events || []).filter((e) => e.id !== id) }));
 
   // clicking an empty slot prefills the form rather than opening a popover
   const slotClick = (day, minutes) => {
@@ -2417,11 +2429,14 @@ function TaskGroupView({ data, setData, now, group, title, sessionEmoji }) {
   const tasks = data.tasks.filter((t) => cats.some((c) => c.id === t.cat));
 
   const addTask = (catId, title2, minutes, oneOnOne, dueDate) => {
-    const est = estFor(minutes, data.settings.work);
-    setData({ ...data, tasks: [...data.tasks, { id: uid(), title: title2, cat: catId, minutes, est, done: 0, checked: false, oneOnOne, dueDate }] });
+    const id = uid();
+    setData((prev) => ({
+      ...prev,
+      tasks: [...prev.tasks, { id, title: title2, cat: catId, minutes, est: estFor(minutes, prev.settings.work), done: 0, checked: false, oneOnOne, dueDate }],
+    }));
   };
   const toggle = (t) => toggleTask(data, setData, t, setBurst);
-  const delTask = (id) => setData({ ...data, tasks: data.tasks.filter((x) => x.id !== id) });
+  const delTask = (id) => setData((prev) => ({ ...prev, tasks: prev.tasks.filter((x) => x.id !== id) }));
   const edit = (id, patch) => editTask(data, setData, id, patch);
   const toggleAll = (id) => toggleAllSubtasks(data, setData, id, setBurst);
   const addSub = (id, t2, minutes, dueDate) => addSubtask(data, setData, id, t2, minutes, dueDate, setBurst);
@@ -2439,61 +2454,69 @@ function TaskGroupView({ data, setData, now, group, title, sessionEmoji }) {
      would simply archive itself again at the next rollover. Subtasks come back
      unchecked too, or the parent would re-derive straight to checked. */
   const reopenArchived = (id) => {
-    const t = (data.archive || []).find((x) => x.id === id);
-    if (!t) return;
-    setData({
-      ...data,
-      archive: (data.archive || []).filter((x) => x.id !== id),
-      tasks: [...data.tasks, {
-        ...t, checked: false, done: 0, completedDate: null,
-        subtasks: (t.subtasks || []).map((sb) => ({ ...sb, checked: false })),
-      }],
+    setData((prev) => {
+      const t = (prev.archive || []).find((x) => x.id === id);
+      if (!t) return prev;
+      return {
+        ...prev,
+        archive: (prev.archive || []).filter((x) => x.id !== id),
+        tasks: [...prev.tasks, {
+          ...t, checked: false, done: 0, completedDate: null,
+          subtasks: (t.subtasks || []).map((sb) => ({ ...sb, checked: false })),
+        }],
+      };
     });
   };
 
   const addCat = () => {
     const name = newCat.trim();
     if (!name) return;
-    const list = allCats(data);
-    setData({
-      ...data,
-      categories: [...list, { id: catIdFor(name, list), name, color: CAT_COLORS[list.length % CAT_COLORS.length], group }],
+    setData((prev) => {
+      const list = allCats(prev);
+      return {
+        ...prev,
+        categories: [...list, { id: catIdFor(name, list), name, color: CAT_COLORS[list.length % CAT_COLORS.length], group }],
+      };
     });
     setNewCat("");
   };
   // only ever offered for an empty section — deleting one with tasks would strand
   // them somewhere they can never be seen again
-  const delCat = (id) => setData({ ...data, categories: allCats(data).filter((c) => c.id !== id) });
+  const delCat = (id) => setData((prev) => ({ ...prev, categories: allCats(prev).filter((c) => c.id !== id) }));
 
   // Same shuffle-and-write-back as moveCat, but over one category's slots in the
   // flat tasks array. Dropping onto another category's row is ignored — a drag
   // reorders, it doesn't refile.
   const moveTask = (fromId, toId) => {
     if (!fromId || fromId === toId) return;
-    const all = data.tasks;
-    const from = all.find((t) => t.id === fromId), to = all.find((t) => t.id === toId);
-    if (!from || !to || from.cat !== to.cat) return;
-    const ids = all.filter((t) => t.cat === from.cat).map((t) => t.id);
-    const fi = ids.indexOf(fromId), ti = ids.indexOf(toId);
-    if (fi < 0 || ti < 0) return;
-    ids.splice(ti, 0, ids.splice(fi, 1)[0]);
-    const byId = Object.fromEntries(all.map((t) => [t.id, t]));
-    let i = 0;
-    setData({ ...data, tasks: all.map((t) => (t.cat === from.cat ? byId[ids[i++]] : t)) });
+    setData((prev) => {
+      const all = prev.tasks;
+      const from = all.find((t) => t.id === fromId), to = all.find((t) => t.id === toId);
+      if (!from || !to || from.cat !== to.cat) return prev;
+      const ids = all.filter((t) => t.cat === from.cat).map((t) => t.id);
+      const fi = ids.indexOf(fromId), ti = ids.indexOf(toId);
+      if (fi < 0 || ti < 0) return prev;
+      ids.splice(ti, 0, ids.splice(fi, 1)[0]);
+      const byId = Object.fromEntries(all.map((t) => [t.id, t]));
+      let i = 0;
+      return { ...prev, tasks: all.map((t) => (t.cat === from.cat ? byId[ids[i++]] : t)) };
+    });
   };
 
   // Reorder within this group only: the group's ids are shuffled, then written back
   // into the slots this group already occupies, so the other group stays put.
   const moveCat = (fromId, toId) => {
     if (!fromId || fromId === toId) return;
-    const list = allCats(data);
-    const ids = list.filter((c) => c.group === group).map((c) => c.id);
-    const from = ids.indexOf(fromId), to = ids.indexOf(toId);
-    if (from < 0 || to < 0) return;
-    ids.splice(to, 0, ids.splice(from, 1)[0]);
-    const byId = Object.fromEntries(list.map((c) => [c.id, c]));
-    let i = 0;
-    setData({ ...data, categories: list.map((c) => (c.group === group ? byId[ids[i++]] : c)) });
+    setData((prev) => {
+      const list = allCats(prev);
+      const ids = list.filter((c) => c.group === group).map((c) => c.id);
+      const from = ids.indexOf(fromId), to = ids.indexOf(toId);
+      if (from < 0 || to < 0) return prev;
+      ids.splice(to, 0, ids.splice(from, 1)[0]);
+      const byId = Object.fromEntries(list.map((c) => [c.id, c]));
+      let i = 0;
+      return { ...prev, categories: list.map((c) => (c.group === group ? byId[ids[i++]] : c)) };
+    });
   };
 
   const doneCt = tasks.filter((t) => t.checked).length;
@@ -2766,16 +2789,16 @@ function BudgetView({ data, setData, now }) {
   const freeBudget = budget.monthlyIncome - fixedTotal - foodCat.budget;
   const spendCats = [foodCat, { ...freeCat, budget: freeBudget }];
 
-  const updateCat = (catId, fn) => setData({
-    ...data,
-    budget: { ...budget, categories: budget.categories.map((c) => (c.id === catId ? fn(c) : c)) },
-  });
+  const updateCat = (catId, fn) => setData((prev) => ({
+    ...prev,
+    budget: { ...prev.budget, categories: prev.budget.categories.map((c) => (c.id === catId ? fn(c) : c)) },
+  }));
   const addItem = (catId, name, amount) => updateCat(catId, (c) => ({ ...c, items: [...c.items, { id: uid(), name, amount, date: dateKey(now) }] }));
   const updateItem = (catId, itemId, patch) => updateCat(catId, (c) => ({ ...c, items: c.items.map((i) => (i.id === itemId ? { ...i, ...patch } : i)) }));
   const delItem = (catId, itemId) => updateCat(catId, (c) => ({ ...c, items: c.items.filter((i) => i.id !== itemId) }));
   const addPreset = (catId, name, amount) => updateCat(catId, (c) => ({ ...c, presets: [...(c.presets || []), { id: uid(), name, amount }] }));
   const delPreset = (catId, pid) => updateCat(catId, (c) => ({ ...c, presets: (c.presets || []).filter((p) => p.id !== pid) }));
-  const setIncome = (v) => setData({ ...data, budget: { ...budget, monthlyIncome: Math.max(0, +v || 0) } });
+  const setIncome = (v) => setData((prev) => ({ ...prev, budget: { ...prev.budget, monthlyIncome: Math.max(0, +v || 0) } }));
   const setFoodBudget = (v) => updateCat("food", (c) => ({ ...c, budget: Math.max(0, +v || 0) }));
 
   const donutSegments = [
@@ -3489,9 +3512,12 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
   const active = activeEntry?.item || null;
   const activeNo = activeEntry ? entries.indexOf(activeEntry) + 1 : 0;
 
-  const setQueue = (ids) => setData({ ...data, sessionQueue: ids });
+  const setQueue = (ids) => setData((prev) => ({ ...prev, sessionQueue: ids }));
   // closing is the picker's call, not this one's — it stays open across subtask picks
-  const addToQueue = (qid) => { if (!queueIds.includes(qid)) setQueue([...queueIds, qid]); };
+  const addToQueue = (qid) => setData((prev) => {
+    const ids = prev.sessionQueue || [];
+    return ids.includes(qid) ? prev : { ...prev, sessionQueue: [...ids, qid] };
+  });
   // A task typed in here is an ordinary task, filed under a real category, so it
   // shows up in Work/Personal like any other. The task and its queue entry are
   // written in one setData — two writes off the same `data` would drop the first.
@@ -3501,29 +3527,39 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
     const title = draft.title.trim();
     if (!title || !draftCat) return;
     const minutes = Math.max(5, +draft.minutes || 25);
-    const task = {
-      id: uid(), title, cat: draftCat, minutes, est: estFor(minutes, s.work),
-      done: 0, checked: false, oneOnOne: false, dueDate: null,
-    };
-    setData({ ...data, tasks: [...data.tasks, task], sessionQueue: [...queueIds, task.id] });
+    const id = uid();
+    setData((prev) => ({
+      ...prev,
+      tasks: [...prev.tasks, {
+        id, title, cat: draftCat, minutes, est: estFor(minutes, prev.settings.work),
+        done: 0, checked: false, oneOnOne: false, dueDate: null,
+      }],
+      sessionQueue: [...(prev.sessionQueue || []), id],
+    }));
     setDraft({ ...draft, title: "", minutes: 25, cat: draftCat });
     setCreating(false);
   };
-  const removeFromQueue = (id) => setQueue(queueIds.filter((x) => x !== id));
+  const removeFromQueue = (id) =>
+    setData((prev) => ({ ...prev, sessionQueue: (prev.sessionQueue || []).filter((x) => x !== id) }));
   // reordering the queue also moves which task is active, since "active" is just
   // the first unchecked one — that's the point of being able to drag them
   const moveInQueue = (fromId, toId) => {
     if (!fromId || fromId === toId) return;
-    const ids = [...queueIds];
-    const fi = ids.indexOf(fromId), ti = ids.indexOf(toId);
-    if (fi < 0 || ti < 0) return;
-    ids.splice(ti, 0, ids.splice(fi, 1)[0]);
-    setQueue(ids);
+    setData((prev) => {
+      const ids = [...(prev.sessionQueue || [])];
+      const fi = ids.indexOf(fromId), ti = ids.indexOf(toId);
+      if (fi < 0 || ti < 0) return prev;
+      ids.splice(ti, 0, ids.splice(fi, 1)[0]);
+      return { ...prev, sessionQueue: ids };
+    });
   };
   const guests = data.guests || [];
-  const setGuests = (g) => setData({ ...data, guests: g });
-  const updateGuest = (gid, fn) => setGuests(guests.map((g) => (g.id === gid ? fn(g) : g)));
-  const addGuest = () => setGuests([...guests, { id: uid(), name: `Person ${guests.length + 2}`, tasks: [] }]);
+  const updateGuest = (gid, fn) =>
+    setData((prev) => ({ ...prev, guests: (prev.guests || []).map((g) => (g.id === gid ? fn(g) : g)) }));
+  const addGuest = () => setData((prev) => {
+    const list = prev.guests || [];
+    return { ...prev, guests: [...list, { id: uid(), name: `Person ${list.length + 2}`, tasks: [] }] };
+  });
   const addGuestTask = (gid, title, minutes) => updateGuest(gid, (g) => ({
     ...g,
     tasks: [...g.tasks, { id: uid(), title, minutes, est: estFor(minutes, s.work), done: 0, checked: false }],
@@ -3584,10 +3620,15 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
 
   const setDur = (k, v) => {
     const val = Math.max(1, Math.min(120, +v || 1));
-    const tasks = k === "work" ? recomputeSessions(data.tasks, val) : data.tasks;
-    // guests' tasks track the focus length too — they're the same shape
-    const nextGuests = k === "work" ? guests.map((g) => ({ ...g, tasks: recomputeSessions(g.tasks, val) })) : guests;
-    setData({ ...data, settings: { ...s, [k]: val }, tasks, guests: nextGuests });
+    setData((prev) => ({
+      ...prev,
+      settings: { ...prev.settings, [k]: val },
+      tasks: k === "work" ? recomputeSessions(prev.tasks, val) : prev.tasks,
+      // guests' tasks track the focus length too — they're the same shape
+      guests: k === "work"
+        ? (prev.guests || []).map((g) => ({ ...g, tasks: recomputeSessions(g.tasks, val) }))
+        : prev.guests,
+    }));
     if (!running) setLeft((k === "work" && mode === "work") || (k === "short" && mode === "short") || (k === "long" && mode === "long") ? val * 60 : left);
   };
 
@@ -3709,7 +3750,7 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
           onToggleTask={(tid) => toggleGuestTask(g.id, tid)}
           onDelTask={(tid) => updateGuest(g.id, (x) => ({ ...x, tasks: x.tasks.filter((t) => t.id !== tid) }))}
           onRename={(name) => updateGuest(g.id, (x) => ({ ...x, name }))}
-          onRemove={() => setGuests(guests.filter((x) => x.id !== g.id))} />
+          onRemove={() => setData((prev) => ({ ...prev, guests: (prev.guests || []).filter((x) => x.id !== g.id) }))} />
       ))}
       </div>
 

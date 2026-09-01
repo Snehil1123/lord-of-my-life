@@ -20,6 +20,9 @@ export const signOut = () => supabase.auth.signOut();
 export const getSession = async () => (await supabase.auth.getSession()).data.session;
 export const onAuthChange = (cb) => supabase.auth.onAuthStateChange((_event, session) => cb(session));
 
+// `_client` is transport bookkeeping, not planner state — it never reaches the app
+const stripClient = ({ _client, ...rest }) => rest;
+
 export async function fetchCloudData(userId) {
   const { data, error } = await supabase
     .from("planner_data")
@@ -27,13 +30,20 @@ export async function fetchCloudData(userId) {
     .eq("user_id", userId)
     .maybeSingle();
   if (error) throw error;
-  return data; // null if no row yet
+  return data ? { ...data, data: stripClient(data.data) } : null;
 }
+
+/* Identifies this tab's writes in the realtime stream. Postgres changes are
+   broadcast to every subscriber including the one that made them, so without a
+   marker a device applies its own push back over itself — and any edit made in
+   the 600ms since is silently reverted. Riding inside the JSONB blob keeps this
+   out of the table schema. */
+export const clientId = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
 export async function pushCloudData(userId, data) {
   const { error } = await supabase
     .from("planner_data")
-    .upsert({ user_id: userId, data, updated_at: new Date().toISOString() });
+    .upsert({ user_id: userId, data: { ...data, _client: clientId }, updated_at: new Date().toISOString() });
   if (error) throw error;
 }
 
@@ -74,14 +84,21 @@ export function joinRoom(code, presenceKey, onPeers, onStatus) {
   };
 }
 
-// Fires cb(newData) whenever another device updates this user's row.
+/* Fires cb(newData) when *another* device updates this user's row. Our own
+   writes come back down this channel too and are dropped here: applying one
+   would overwrite whatever was edited while it was in flight, which reads
+   exactly like a task un-completing itself a moment after you tick it. */
 export function subscribeToCloudData(userId, cb) {
   const channel = supabase
     .channel(`planner_data:${userId}`)
     .on(
       "postgres_changes",
       { event: "UPDATE", schema: "public", table: "planner_data", filter: `user_id=eq.${userId}` },
-      (payload) => cb(payload.new.data)
+      (payload) => {
+        const next = payload.new?.data;
+        if (!next || next._client === clientId) return;
+        cb(stripClient(next));
+      }
     )
     .subscribe();
   return () => supabase.removeChannel(channel);
