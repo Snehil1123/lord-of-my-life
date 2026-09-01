@@ -1293,7 +1293,7 @@ function UpdatePill() {
   return (
     <div className="updwrap">
       <button className="updpill" onClick={() => setOpen((v) => !v)} title="An update is ready to install">
-        ⟳ Update
+        Update
       </button>
       {open && (
         <div className="updpanel">
