@@ -297,11 +297,29 @@ looking for the old `.timerring` SVG, it was replaced by `.pomoprog`.
   child: the row's own click completes the task, so nesting them would mean
   ticking a subtask also ticked off its parent. Its buttons stop propagation
   for the same reason.
-- **`data.sessionQueue` is a list of task *ids*, not tasks.** The tasks live in
+- **`data.sessionQueue` is a list of *ids*, not tasks.** The tasks live in
   `data.tasks` as always; the queue only references them. That's what makes
   checking a task off in Session the same edit as checking it off in Work — it
   routes through the same `toggleTask` / `toggleAllSubtasks` helpers, fires the
   same particle burst, and stamps `completedDate` the same way.
+- **An entry is either `taskId` or `taskId::subId`** — a single subtask can be
+  queued on its own. Keeping it a flat list of opaque strings is deliberate:
+  saved queues, the drag reorder, the room presence payload and the stale-id
+  filter all carry on unchanged, so there's no migration. `resolveQueued` /
+  `queueItems` (below `minutesLeft`) turn ids into `{ qid, task, sub, item }`;
+  `qidTask` recovers the task id, `qidFor` builds one. **Read the queue through
+  `queueItems`, never by looking ids up in `data.tasks` directly**, or a queued
+  subtask resolves to nothing.
+  - A queued subtask's `item` is shaped like *a task whose only subtask is that
+    one* (`subtasks: [sub]`). That's what makes `minutesLeft` measure it in real
+    minutes instead of rounding it up to a whole pomodoro.
+  - **The timer never credits `done` on a queued subtask.** Subtasks are ticked
+    off by hand everywhere else in the app; a pomodoro ending just logs to
+    `pomoLog`. `usePomodoro`'s `onComplete` checks `active.sub` for this.
+  - A task and its own subtasks can never both be queued — `QueuePicker` drops
+    the task from the list once it's queued whole, and hides "Add the whole task
+    instead" once any subtask of it is queued. Both guards exist because the
+    queue would otherwise count that time twice.
 - Read it as `data.sessionQueue || []` — it's optional, so existing saved data
   needs no migration. Ids whose task was deleted elsewhere are dropped on read
   (`.filter(Boolean)`) rather than cleaned up in storage.
@@ -323,6 +341,14 @@ looking for the old `.timerring` SVG, it was replaced by `.pomoprog`.
   remaining sessions one at a time to add the break after each — including the
   long one every 4th — which is most of the difference over a full day. It's
   driven by the `now` prop, so it re-estimates as time passes.
+  - **`remaining` rounds up per item, matching how `planSession` lays blocks
+    down** — a pomodoro is never split between two pieces of work. Ceiling the
+    summed minutes instead made the footer disagree with the calendar as soon as
+    two items were measured in real minutes (30 + 20 minutes is three blocks on
+    the timeline but `ceil(50/25) = 2` here). For an ordinary task the two are
+    identical, which is why it went unnoticed until subtasks could be queued.
+  - **`doneEst` is counted, not derived as `totalEst - remaining`**, so it stays
+    right whatever rounding the items involve.
 - **A shared room puts two people's sessions side by side over the network**
   (`useSessionRoom`, `PeerColumn`, `joinRoom` in `sync.js`). Key points:
   - **A room is a Supabase Realtime channel and nothing else** — no tables, no
@@ -359,9 +385,13 @@ looking for the old `.timerring` SVG, it was replaced by `.pomoprog`.
   guest's tasks are ticked off by hand rather than credited by the timer.
 - `.focuswrap` widens to `.multi` only once a guest exists, so a solo session
   keeps its narrow centred column.
-- The Add Task picker groups by Work then Personal (via `catsIn`), skipping
-  empty categories, and lists only unchecked tasks not already queued. It
-  closes after each add — reopening per task is the deliberate behaviour.
+- **The Add Task picker (`QueuePicker`) is a drill-down**: Work/Personal →
+  section → task → (if it has subtasks) its subtasks. It owns its own navigation
+  state, so closing the panel resets it. A task with subtasks opens its subtask
+  list rather than being added whole, since the usual intent there is to work
+  through parts of it. Picking subtasks leaves the panel open — you normally take
+  several, and each disappears as it's added; picking a whole task closes it.
+  `onAdd` therefore only adds, and the picker decides when to call `onClose`.
 - **"✎ New Task" creates a task without leaving the Session tab**: title,
   minutes, group, category. `createTask` builds exactly what `TaskGroupView`'s
   `addTask` builds, so it's an ordinary task — it appears under its category in

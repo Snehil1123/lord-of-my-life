@@ -88,6 +88,8 @@ const CSS = `
 .fw[data-theme="fantasy"] textarea,
 .fw[data-theme="fantasy"] .qadd,
 .fw[data-theme="fantasy"] .subtasktitle,
+.fw[data-theme="fantasy"] .pickpath,
+.fw[data-theme="fantasy"] .qparent,
 .fw[data-theme="fantasy"] .presetlog{font-size:var(--fsz-meta);}
 /* every mono run, so a row's annotations all match each other and sit below its title */
 .fw[data-theme="fantasy"] .tagdue,
@@ -98,6 +100,7 @@ const CSS = `
 .fw[data-theme="fantasy"] .pcount,
 .fw[data-theme="fantasy"] .catcount,
 .fw[data-theme="fantasy"] .subprogress,
+.fw[data-theme="fantasy"] .picksub,
 .fw[data-theme="fantasy"] .projmeta,
 .fw[data-theme="fantasy"] .legendamt,
 .fw[data-theme="fantasy"] .legendpct,
@@ -553,6 +556,13 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
   border:none; background:none; border-radius:6px; padding:7px 8px; font-size:14px; color:var(--ink);
 }
 .pickitem:hover{background:var(--paper);}
+.pickitem:disabled{opacity:.38;}
+.pickitem:disabled:hover{background:none;}
+.pickchev{color:var(--muted); flex:none;}
+.pickcrumb{display:flex; align-items:center; gap:8px; padding:0 2px 8px; border-bottom:1px solid var(--line); margin-bottom:4px;}
+.pickpath{font-size:12.5px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.picksub{font-family:var(--font-mono); font-size:11.5px; color:var(--muted); flex:none;}
+.qparent{color:var(--muted); font-size:12px;}
 .qfoot{
   margin-top:16px; border-top:1px solid var(--line); padding-top:14px;
   display:flex; gap:22px; justify-content:center; flex-wrap:wrap;
@@ -1050,8 +1060,8 @@ export default function LordOfMyLife() {
   const timer = usePomodoro(data, setData, dataRef);
   const authEmail = useAuthEmail();
   const roomQueue = useMemo(
-    () => (data.sessionQueue || []).map((id) => data.tasks.find((t) => t.id === id)).filter(Boolean),
-    [data.sessionQueue, data.tasks],
+    () => queueItems(data.sessionQueue, data.tasks, data.settings.work).map((q) => q.item),
+    [data.sessionQueue, data.tasks, data.settings.work],
   );
   const session = useSessionRoom({
     defaultName: authEmail ? authEmail.split("@")[0] : "",
@@ -1623,7 +1633,7 @@ function dragHandlers(drag) {
   };
 }
 
-function TaskRow({ t, burst, onToggle, onToggleAll, onDelete, onEdit, onAddSubtask, onToggleSubtask, onDeleteSubtask, onEditSubtask, now, sessionMin, inSession, sessionEmoji, drag }) {
+function TaskRow({ t, burst, onToggle, onToggleAll, onDelete, onEdit, onAddSubtask, onToggleSubtask, onDeleteSubtask, onEditSubtask, now, sessionMin, inSession, queuedSubs, sessionEmoji, drag }) {
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [title, setTitle] = useState(t.title);
@@ -1711,7 +1721,8 @@ function TaskRow({ t, burst, onToggle, onToggleAll, onDelete, onEdit, onAddSubta
         <div className="subtasks">
           {(t.subtasks || []).map((s) => (
             <SubtaskRow key={s.id} sub={s} onToggle={() => onToggleSubtask(s.id)} onDelete={() => onDeleteSubtask(s.id)}
-              onEdit={(patch) => onEditSubtask(s.id, patch)} now={now} />
+              onEdit={(patch) => onEditSubtask(s.id, patch)} now={now}
+              inSession={!!queuedSubs?.has(qidFor(t.id, s.id))} sessionEmoji={sessionEmoji} />
           ))}
           <AddSubtaskRow onAdd={(title2, minutes2, dueDate2) => onAddSubtask(title2, minutes2, dueDate2)} />
         </div>
@@ -1821,7 +1832,7 @@ const toggleAllSubtasks = (data, setData, taskId, setBurst) => {
   updateSubtasks(data, setData, taskId, (t) => ({ ...t, subtasks: t.subtasks.map((s) => ({ ...s, checked: target })) }), setBurst);
 };
 
-function SubtaskRow({ sub, onToggle, onDelete, onEdit, now }) {
+function SubtaskRow({ sub, onToggle, onDelete, onEdit, now, inSession, sessionEmoji }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(sub.title);
   const [minutes, setMinutes] = useState(sub.minutes);
@@ -1860,6 +1871,7 @@ function SubtaskRow({ sub, onToggle, onDelete, onEdit, now }) {
     <div className={`subtaskrow ${sub.checked ? "done" : ""} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}>
       <button className={`check small ${sub.checked ? "on" : ""}`} aria-label={sub.checked ? "Mark not done" : "Mark done"} onClick={onToggle}>✓</button>
       <span className="subtasktitle">{sub.title}</span>
+      {inSession && <span className="tagsess">{sessionEmoji} session</span>}
       <span className="submeta">
         {sub.dueDate && (
           <span className="tagdue" style={{ color: urgency === "overdue" ? "var(--tomato)" : urgency === "due-today" ? "var(--amber)" : "var(--muted)" }}>
@@ -2214,7 +2226,10 @@ function TaskGroupView({ data, setData, now, group, title, sessionEmoji }) {
   const taskDragRef = useRef(null);
   const [taskDragId, setTaskDragId] = useState(null);
   const [overId, setOverId] = useState(null);
-  const queued = new Set(data.sessionQueue || []);
+  // a queued subtask marks its parent too, so the pill means "some of this is
+  // in the session" rather than going missing whenever you queued the parts
+  const queued = new Set((data.sessionQueue || []).map(qidTask));
+  const queuedSubs = new Set(data.sessionQueue || []);
 
   // which edge of the hovered row to draw the insertion line on, matching where
   // moveTask will actually drop it: below when moving down, above when moving up
@@ -2338,7 +2353,7 @@ function TaskGroupView({ data, setData, now, group, title, sessionEmoji }) {
               {list.map((t) => (
                 <TaskRow key={t.id} t={t} burst={burst} onToggle={toggle} onToggleAll={() => toggleAll(t.id)}
                   onDelete={delTask} onEdit={edit} now={now} sessionMin={data.settings.work}
-                  inSession={queued.has(t.id)} sessionEmoji={sessionEmoji} drag={taskDrag(t.id)}
+                  inSession={queued.has(t.id)} queuedSubs={queuedSubs} sessionEmoji={sessionEmoji} drag={taskDrag(t.id)}
                   onAddSubtask={(t2, minutes, dueDate) => addSub(t.id, t2, minutes, dueDate)}
                   onToggleSubtask={(subId) => toggleSub(t.id, subId)}
                   onDeleteSubtask={(subId) => delSub(t.id, subId)}
@@ -2651,6 +2666,39 @@ function minutesLeft(t, workMin) {
   return Math.max(0, t.est - t.done) * workMin;
 }
 
+/* A queue entry is either a task id or "taskId::subId". Keeping the queue a flat
+   list of opaque strings is what lets saved queues, the drag reorder, the room
+   presence payload and the stale-id filter all carry on unchanged — there's no
+   migration.
+
+   A queued subtask resolves to an item shaped like a task whose only subtask is
+   that one, which is deliberate: minutesLeft then measures it exactly, the same
+   way it measures a parent's remaining subtasks, instead of rounding it up to a
+   whole pomodoro the way a bare `minutes` field would. */
+const QSEP = "::";
+const qidFor = (taskId, subId) => (subId ? `${taskId}${QSEP}${subId}` : taskId);
+const qidTask = (qid) => String(qid).split(QSEP)[0];
+
+function resolveQueued(qid, tasks, workMin) {
+  const [tid, sid] = String(qid).split(QSEP);
+  const task = tasks.find((t) => t.id === tid);
+  if (!task) return null;
+  if (!sid) return { qid, task, sub: null, item: task };
+  const sub = (task.subtasks || []).find((x) => x.id === sid);
+  if (!sub) return null;
+  const est = estFor(sub.minutes, workMin);
+  return {
+    qid, task, sub,
+    item: {
+      id: qid, title: sub.title, cat: task.cat, minutes: sub.minutes,
+      est, done: sub.checked ? est : 0, checked: sub.checked, subtasks: [sub],
+    },
+  };
+}
+// stale entries (task or subtask deleted elsewhere) are dropped on read
+const queueItems = (queueIds, tasks, workMin) =>
+  (queueIds || []).map((q) => resolveQueued(q, tasks, workMin)).filter(Boolean);
+
 /* Lays the session queue forward from `from`, stepping over anything already
    booked. This is the one place that decides when work actually happens: the
    week grid draws it, the Session list reads the events out of it, and the
@@ -2704,8 +2752,17 @@ function planSession(tasks, events, s, cycle, from) {
    over a full day. */
 function sessionStats(tasks, s, cycle, now) {
   const totalEst = tasks.reduce((n, t) => n + t.est, 0);
-  const remaining = Math.ceil(tasks.reduce((n, t) => n + minutesLeft(t, s.work), 0) / s.work);
-  const doneEst = Math.max(0, totalEst - remaining);
+  /* Rounded up per item, exactly as planSession lays blocks down — a pomodoro is
+     never shared between two pieces of work. Ceiling the sum instead quietly
+     disagreed with the plan whenever two items were measured in real minutes
+     rather than whole sessions (two 30 and 20 minute subtasks are three blocks
+     on the calendar but ceil(50/25) = 2 here), so the footer and the timeline
+     told different stories. For an ordinary task the two are identical, which is
+     why it went unnoticed. */
+  const remaining = tasks.reduce((n, t) => n + Math.ceil(minutesLeft(t, s.work) / s.work), 0);
+  // counted rather than derived from totalEst - remaining, so it stays right
+  // whatever rounding the items involve
+  const doneEst = Math.min(totalEst, tasks.reduce((n, t) => n + (t.checked ? t.est : t.done), 0));
   let mins = 0;
   for (let i = 0; i < remaining; i++) {
     mins += s.work;
@@ -2756,13 +2813,16 @@ function usePomodoro(data, setData, dataRef) {
       // read the queue at completion time, so a session credits whatever is
       // active when it ends rather than when it started
       const cur = dataRef.current;
-      const queue = (cur.sessionQueue || []).map((id) => cur.tasks.find((t) => t.id === id)).filter(Boolean);
-      const active = queue.find((t) => !t.checked) || null;
+      const active = queueItems(cur.sessionQueue, cur.tasks, cur.settings.work).find((q) => !q.item.checked) || null;
       const dk = dateKey(new Date());
       setData((prev) => ({
         ...prev,
         pomoLog: { ...prev.pomoLog, [dk]: (prev.pomoLog[dk] || 0) + 1 },
-        tasks: active ? prev.tasks.map((t) => (t.id === active.id ? { ...t, done: t.done + 1 } : t)) : prev.tasks,
+        // a queued subtask has no pomodoro counter of its own — it's ticked off
+        // by hand, exactly as subtasks already are in Work/Personal
+        tasks: active && !active.sub
+          ? prev.tasks.map((t) => (t.id === active.task.id ? { ...t, done: t.done + 1 } : t))
+          : prev.tasks,
       }));
       const nextCycle = cycle + 1;
       setCycle(nextCycle);
@@ -3003,20 +3063,25 @@ function GuestColumn({ guest, s, cycle, now, onAddTask, onToggleTask, onDelTask,
 /* A queued task. The subtask list is a *sibling* of .qrow, not a child — the row
    itself completes the task on click, so nesting the subtasks inside it would
    mean checking a subtask also ticked off its parent. */
-function QueueRow({ t, data, setData, now, isActive, burst, setBurst, onComplete, onRemove, drag }) {
+function QueueRow({ entry, data, setData, now, isActive, burst, setBurst, onComplete, onRemove, drag }) {
   const [expanded, setExpanded] = useState(false);
-  const subs = t.subtasks || [];
+  const t = entry.item;
+  // A queued subtask is one line of work, not a container: it shows its parent
+  // for context and has nothing to expand. Only a whole task offers the list.
+  const isSub = !!entry.sub;
+  const subs = isSub ? [] : t.subtasks || [];
   const doneSubs = subs.filter((x) => x.checked).length;
+  const burstId = isSub ? entry.sub.id : t.id;
   const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
 
   return (
     <>
-      <div className={`qrow ${t.checked ? "done" : ""} ${burstClass(burst, t.id)} ${isActive ? "active" : ""} ${drag?.dragging ? "dragging" : ""} ${drag?.over || ""}`}
+      <div className={`qrow ${t.checked ? "done" : ""} ${burstClass(burst, burstId)} ${isActive ? "active" : ""} ${drag?.dragging ? "dragging" : ""} ${drag?.over || ""}`}
         onClick={onComplete} title="Click to mark done · drag to reorder"
         {...dragHandlers(drag)}>
         <span className="checkwrap">
           <button className={`check ${t.checked ? "on" : ""}`} aria-label={t.checked ? "Mark not done" : "Mark done"}>✓</button>
-          {burst?.id === t.id && burst.kind === "done" && Array.from({ length: 8 }, (_, i) => (
+          {burst?.id === burstId && burst.kind === "done" && Array.from({ length: 8 }, (_, i) => (
             <span key={i} className="particle" style={{
               background: catColorFor(allCats(data), t.cat),
               "--dx": `${Math.cos((i / 8) * 6.28) * 26}px`,
@@ -3024,12 +3089,17 @@ function QueueRow({ t, data, setData, now, isActive, burst, setBurst, onComplete
             }} />
           ))}
         </span>
-        <span className="tasktitle" style={{ flex: 1, minWidth: 0 }}>{t.title}</span>
+        <span className="tasktitle" style={{ flex: 1, minWidth: 0 }}>
+          {t.title}
+          {isSub && <span className="qparent"> · {entry.task.title}</span>}
+        </span>
         {isActive && !t.checked && <SessionMark t={t} />}
         {subs.length > 0 && <span className="subprogress">{doneSubs}/{subs.length}</span>}
         <span className="pcount">{t.done}/{t.est}</span>
-        <button className="subtoggle" title={expanded ? "Hide subtasks" : "Subtasks"}
-          onClick={stop(() => setExpanded((v) => !v))}>{expanded ? "▾" : "▸"}</button>
+        {!isSub && (
+          <button className="subtoggle" title={expanded ? "Hide subtasks" : "Subtasks"}
+            onClick={stop(() => setExpanded((v) => !v))}>{expanded ? "▾" : "▸"}</button>
+        )}
         <button className="xbtn" title="Remove from session" onClick={stop(onRemove)}>✕</button>
       </div>
 
@@ -3045,6 +3115,130 @@ function QueueRow({ t, data, setData, now, isActive, burst, setBurst, onComplete
         </div>
       )}
     </>
+  );
+}
+
+/* Adding an existing task is a drill-down — Work/Personal, then section, then
+   task — rather than one list of every open task with its sections as headings.
+   The flat list was fine with a handful of tasks and unreadable past that.
+
+   A task that has subtasks opens its subtask list instead of being added whole:
+   the usual intent with such a task is to work through parts of it, not to sit
+   down to all of it. Adding it whole is still offered there, and only while it
+   isn't already queued. Picking subtasks leaves the list open, since you're
+   normally taking several; picking a whole task closes it. */
+function QueuePicker({ data, queueIds, onAdd, onClose }) {
+  const [group, setGroup] = useState(null);
+  const [catId, setCatId] = useState(null);
+  const [taskId, setTaskId] = useState(null);
+
+  const queued = new Set(queueIds);
+  const subsOf = (t) => t.subtasks || [];
+  const openSubs = (t) => subsOf(t).filter((sb) => !sb.checked && !queued.has(qidFor(t.id, sb.id)));
+  // Queued whole, a task drops out entirely rather than still offering its
+  // parts: the queue would otherwise hold the task *and* pieces of it and count
+  // that time twice. The whole-task button is guarded the other way round.
+  const offerable = (t) => !t.checked && !queued.has(t.id) && (subsOf(t).length ? openSubs(t).length > 0 : true);
+  const anySubQueued = (t) => subsOf(t).some((sb) => queued.has(qidFor(t.id, sb.id)));
+  const open = data.tasks.filter(offerable);
+  const countIn = (g) => open.filter((t) => catsIn(data, g).some((c) => c.id === t.cat)).length;
+
+  const cats = group ? catsIn(data, group) : [];
+  const task = taskId ? data.tasks.find((t) => t.id === taskId) : null;
+  const back = () => (task ? setTaskId(null) : catId ? setCatId(null) : setGroup(null));
+
+  const crumb = [
+    group === "work" ? "Work" : group === "personal" ? "Personal" : null,
+    catId ? cats.find((c) => c.id === catId)?.name : null,
+    task ? task.title : null,
+  ].filter(Boolean).join(" › ");
+
+  const done = <button className="btn" style={{ marginTop: 6, width: "100%" }} onClick={onClose}>Done</button>;
+  const header = group && (
+    <div className="pickcrumb">
+      <button className="btn ghost" style={{ padding: "2px 8px" }} onClick={back}>‹ Back</button>
+      <span className="pickpath" title={crumb}>{crumb}</span>
+    </div>
+  );
+
+  let body;
+  if (task) {
+    const subs = openSubs(task);
+    body = (
+      <>
+        {subs.map((sb) => (
+          <button key={sb.id} className="pickitem" onClick={() => onAdd(qidFor(task.id, sb.id))}>
+            <span style={{ flex: 1, minWidth: 0 }}>{sb.title}</span>
+            <span className="picksub">{sb.minutes} min</span>
+          </button>
+        ))}
+        {!subs.length && (
+          <div className="emptystate" style={{ padding: "12px 8px" }}>
+            Every subtask here is already queued or done.
+          </div>
+        )}
+        {!anySubQueued(task) && (
+          <button className="pickitem" style={{ borderTop: "1px solid var(--line)", marginTop: 4 }}
+            onClick={() => { onAdd(task.id); onClose(); }}>
+            <span style={{ flex: 1, minWidth: 0, color: "var(--muted)" }}>Add the whole task instead</span>
+          </button>
+        )}
+      </>
+    );
+  } else if (catId) {
+    const list = open.filter((t) => t.cat === catId);
+    body = list.map((t) => {
+      const n = openSubs(t).length;
+      return subsOf(t).length ? (
+        <button key={t.id} className="pickitem" onClick={() => setTaskId(t.id)}>
+          <span style={{ flex: 1, minWidth: 0 }}>{t.title}</span>
+          <span className="picksub">{n} subtask{n === 1 ? "" : "s"}</span>
+          <span className="pickchev">›</span>
+        </button>
+      ) : (
+        <button key={t.id} className="pickitem" onClick={() => { onAdd(t.id); onClose(); }}>
+          <span style={{ flex: 1, minWidth: 0 }}>{t.title}</span>
+          <span className="pcount">{t.done}/{t.est}</span>
+        </button>
+      );
+    });
+  } else if (group) {
+    body = cats.map((c) => {
+      const n = open.filter((t) => t.cat === c.id).length;
+      return (
+        <button key={c.id} className="pickitem" disabled={!n} onClick={() => setCatId(c.id)}>
+          <span className="pickcat" style={{ color: c.color, padding: 0 }}>{c.name}</span>
+          <span style={{ flex: 1 }} />
+          <span className="picksub">{n}</span>
+          <span className="pickchev">›</span>
+        </button>
+      );
+    });
+  } else {
+    body = [["work", "Work"], ["personal", "Personal"]].map(([g, label]) => {
+      const n = countIn(g);
+      return (
+        <button key={g} className="pickitem" disabled={!n} onClick={() => setGroup(g)}>
+          <span className="pickgroup" style={{ padding: 0 }}>{label}</span>
+          <span style={{ flex: 1 }} />
+          <span className="picksub">{n}</span>
+          <span className="pickchev">›</span>
+        </button>
+      );
+    });
+  }
+
+  return (
+    <div className="pickpanel">
+      {header}
+      {body}
+      {!group && !open.length && (
+        <div className="emptystate" style={{ padding: "12px 8px" }}>
+          Nothing left to add — every open task is already in this session.
+        </div>
+      )}
+      {done}
+    </div>
   );
 }
 
@@ -3080,13 +3274,15 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
   const [qOverId, setQOverId] = useState(null);
 
   const queueIds = data.sessionQueue || [];
-  // stale ids (task deleted elsewhere) are dropped on read rather than migrated
-  const queue = queueIds.map((id) => data.tasks.find((t) => t.id === id)).filter(Boolean);
-  const active = queue.find((t) => !t.checked) || null;
-  const activeNo = active ? queue.indexOf(active) + 1 : 0;
+  const entries = queueItems(queueIds, data.tasks, s.work);
+  const queue = entries.map((q) => q.item);
+  const activeEntry = entries.find((q) => !q.item.checked) || null;
+  const active = activeEntry?.item || null;
+  const activeNo = activeEntry ? entries.indexOf(activeEntry) + 1 : 0;
 
   const setQueue = (ids) => setData({ ...data, sessionQueue: ids });
-  const addToQueue = (id) => { setQueue([...queueIds, id]); setPicking(false); };
+  // closing is the picker's call, not this one's — it stays open across subtask picks
+  const addToQueue = (qid) => { if (!queueIds.includes(qid)) setQueue([...queueIds, qid]); };
   // A task typed in here is an ordinary task, filed under a real category, so it
   // shows up in Work/Personal like any other. The task and its queue entry are
   // written in one setData — two writes off the same `data` would drop the first.
@@ -3139,9 +3335,10 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
     onLeave: () => setQOverId((o) => (o === id ? null : o)),
     onDrop: () => { moveInQueue(qDragRef.current, id); endQDrag(); },
   });
-  const completeTask = (t) => {
-    if (t.subtasks && t.subtasks.length) toggleAllSubtasks(data, setData, t.id, setBurst);
-    else toggleTask(data, setData, t, setBurst);
+  const completeTask = (q) => {
+    if (q.sub) toggleSubtask(data, setData, q.task.id, q.sub.id, setBurst);
+    else if ((q.task.subtasks || []).length) toggleAllSubtasks(data, setData, q.task.id, setBurst);
+    else toggleTask(data, setData, q.task, setBurst);
   };
 
   const total = remote ? remote.total || durFor(mode) : durFor(mode);
@@ -3175,9 +3372,6 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
     }
     return map;
   }, [plan]);
-
-  const queued = new Set(queueIds);
-  const available = data.tasks.filter((t) => !t.checked && !queued.has(t.id));
 
   const setDur = (k, v) => {
     const val = Math.max(1, Math.min(120, +v || 1));
@@ -3222,8 +3416,10 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
         </span>
       </div>
 
-      {queue.map((t) => (
-        <React.Fragment key={t.id}>
+      {entries.map((q) => {
+        const t = q.item;
+        return (
+        <React.Fragment key={q.qid}>
         {(blockers[t.id]?.before || []).map((ev) => (
           <div className="qevent" key={ev.id} title="Booked — the session picks up afterwards">
             <span className="qeventtime">{fmtClock(ev.start)}–{fmtClock(ev.end)}</span>
@@ -3231,10 +3427,10 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
             <span className="qeventnote">everything below is after this</span>
           </div>
         ))}
-        <QueueRow t={t} data={data} setData={setData} now={now}
+        <QueueRow entry={q} data={data} setData={setData} now={now}
           isActive={!!active && t.id === active.id} burst={burst} setBurst={setBurst}
-          onComplete={() => completeTask(t)} onRemove={() => removeFromQueue(t.id)}
-          drag={qDrag(t.id)} />
+          onComplete={() => completeTask(q)} onRemove={() => removeFromQueue(q.qid)}
+          drag={qDrag(q.qid)} />
         {(blockers[t.id]?.during || []).map((ev) => (
           <div className="qevent during" key={ev.id} title="This lands in the middle of the task above">
             <span className="qeventtime">{fmtClock(ev.start)}–{fmtClock(ev.end)}</span>
@@ -3243,41 +3439,11 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
           </div>
         ))}
         </React.Fragment>
-      ))}
+        );
+      })}
 
       {picking ? (
-        <div className="pickpanel">
-          {[["Work", catsIn(data, "work")], ["Personal", catsIn(data, "personal")]].map(([group, cats]) => {
-            const anyHere = cats.some((c) => available.some((t) => t.cat === c.id));
-            if (!anyHere) return null;
-            return (
-              <div key={group}>
-                <div className="pickgroup">{group}</div>
-                {cats.map((c) => {
-                  const list = available.filter((t) => t.cat === c.id);
-                  if (!list.length) return null;
-                  return (
-                    <div key={c.id}>
-                      <div className="pickcat" style={{ color: c.color }}>{c.name}</div>
-                      {list.map((t) => (
-                        <button key={t.id} className="pickitem" onClick={() => addToQueue(t.id)}>
-                          <span style={{ flex: 1, minWidth: 0 }}>{t.title}</span>
-                          <span className="pcount">{t.done}/{t.est}</span>
-                        </button>
-                      ))}
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })}
-          {available.length === 0 && (
-            <div className="emptystate" style={{ padding: "12px 8px" }}>
-              Nothing left to add — every open task is already in this session.
-            </div>
-          )}
-          <button className="btn" style={{ marginTop: 6, width: "100%" }} onClick={() => setPicking(false)}>Done</button>
-        </div>
+        <QueuePicker data={data} queueIds={queueIds} onAdd={addToQueue} onClose={() => setPicking(false)} />
       ) : creating ? (
         <div className="pickpanel">
           <input className="field" style={{ width: "100%" }} autoFocus placeholder="What are you working on?"
