@@ -84,7 +84,8 @@ can hold a handle in `release/` and fail the build with `EPERM`.
 ## Releasing
 
 Tag and push; the workflow in `.github/workflows/release.yml` builds the
-installer and publishes it.
+installer and publishes it, along with `latest.yml` and the `.blockmap` that
+installed copies read to update themselves.
 
 ```bash
 git tag v0.2.0 && git push origin v0.2.0

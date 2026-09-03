@@ -6,7 +6,7 @@ import {
 } from "./sync.js";
 import { agentAvailable, onToolCall, onEvent, runQuery, cancelQuery } from "./ai.js";
 import { calAvailable, calConfigured, calStatus, calConnect, calDisconnect, calFetch } from "./gcal.js";
-import { updaterAvailable, checkForUpdate, runUpdate } from "./update.js";
+import { updaterAvailable, checkForUpdate, runUpdate, downloadUpdate, installUpdate, onUpdateProgress } from "./update.js";
 
 /* ============================================================
    LORD OF MY LIFE — one planner for the whole research pipeline
@@ -1499,6 +1499,12 @@ function UpdatePill() {
   const [state, setState] = useState(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [pct, setPct] = useState(0);
+
+  useEffect(() => {
+    if (!updaterAvailable()) return onUpdateProgress(() => {});
+    return onUpdateProgress(setPct);
+  }, []);
 
   useEffect(() => {
     if (!updaterAvailable()) return;
@@ -1517,17 +1523,30 @@ function UpdatePill() {
      only the remote would never fire. A failed check stays quiet rather than
      nagging about git in the corner of a planner. */
   const built = typeof __BUILD_COMMIT__ === "string" ? __BUILD_COMMIT__ : "";
-  const rebuildOnly = !state?.behind && !!built && !!state?.head && state.head !== built;
+  const rebuildOnly = state?.kind === "git" && !state.behind && !!built && !!state.head && state.head !== built;
   if (!state?.ok || (!state.behind && !rebuildOnly)) return null;
   // only a pull can be blocked by local edits; a plain rebuild is exactly what
   // `npm run app:install` does with them in place
-  const blocked = state.dirty && state.behind > 0;
+  const blocked = state.kind === "git" && state.dirty && state.behind > 0;
 
+  /* Two very different actions behind one button. A checkout rebuilds itself and
+     is gone in half a second. An installed copy has to fetch a 160MB installer
+     first, so it reports progress and only then restarts. */
   const start = async () => {
     setBusy(true);
-    const res = await runUpdate();
-    if (!res?.started) { setBusy(false); setState({ ...state, failed: res?.reason || "Couldn't start the update." }); }
-    // on success the app is quitting; leave the button showing "Updating…"
+    if (state.kind === "git") {
+      const res = await runUpdate();
+      if (!res?.started) { setBusy(false); setState({ ...state, failed: res?.reason || "Couldn't start the update." }); }
+      return; // on success the app is quitting
+    }
+    const dl = await downloadUpdate();
+    if (!dl?.downloaded) {
+      setBusy(false);
+      setState({ ...state, failed: dl?.reason || "The download didn't finish." });
+      return;
+    }
+    const res = await installUpdate();
+    if (!res?.started) { setBusy(false); setState({ ...state, failed: res?.reason || "Couldn't start the installer." }); }
   };
 
   return (
@@ -1538,9 +1557,11 @@ function UpdatePill() {
       {open && (
         <div className="updpanel">
           <div className="updhead">
-            {rebuildOnly
-              ? "This build is behind your checkout"
-              : `${state.behind} new commit${state.behind === 1 ? "" : "s"} on ${state.upstream}`}
+            {state.kind === "app"
+              ? `Version ${state.version} is available`
+              : rebuildOnly
+                ? "This build is behind your checkout"
+                : `${state.behind} new commit${state.behind === 1 ? "" : "s"} on ${state.upstream}`}
           </div>
           {state.subject && <div className="updsubject">{state.subject}</div>}
           {blocked ? (
@@ -1550,15 +1571,18 @@ function UpdatePill() {
             </div>
           ) : (
             <div className="updnote">
-              The app will close, rebuild itself in a terminal window, and reopen.
-              Takes a minute or so.
+              {state.kind === "app"
+                ? `You're on ${state.current}. The update downloads in the background, then the app restarts to install it.`
+                : "The app will close, rebuild itself in a terminal window, and reopen. Takes a minute or so."}
             </div>
           )}
           {state.failed && <div className="updwarn">{state.failed}</div>}
           <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
             <button className="btn primary" style={{ marginLeft: "auto" }}
               disabled={blocked || busy} onClick={start}>
-              {busy ? "Updating…" : "Update & restart"}
+              {!busy ? "Update & restart"
+                : state.kind === "app" ? (pct > 0 && pct < 100 ? `Downloading ${pct}%` : "Downloading…")
+                : "Updating…"}
             </button>
             <button className="btn ghost" onClick={() => setOpen(false)}>Later</button>
           </div>

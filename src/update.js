@@ -14,3 +14,12 @@ export const checkForUpdate = () =>
   bridge()?.check() ?? Promise.resolve({ ok: false, reason: "Desktop app only." });
 export const runUpdate = () =>
   bridge()?.run() ?? Promise.resolve({ started: false, reason: "Desktop app only." });
+
+/* The installed-app path: electron-updater downloads the release installer and
+   then restarts into it. Separate from runUpdate because a checkout rebuilds
+   itself instead — see electron/main.cjs for why one can't serve both. */
+export const downloadUpdate = () =>
+  bridge()?.download() ?? Promise.resolve({ downloaded: false, reason: "Desktop app only." });
+export const installUpdate = () =>
+  bridge()?.install() ?? Promise.resolve({ started: false, reason: "Desktop app only." });
+export const onUpdateProgress = (cb) => bridge()?.onProgress(cb) ?? (() => {});

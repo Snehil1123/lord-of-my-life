@@ -137,7 +137,53 @@ ipcMain.handle("gcal:list", async (_e, cfg) => {
 ipcMain.handle("gcal:status", () => gcal.status({ store }));
 ipcMain.handle("gcal:disconnect", () => gcal.disconnect({ store }));
 
-ipcMain.handle("update:check", () => updater.check({ appPath: app.getAppPath() }));
+/* ---------------- updating ----------------
+   Two mechanisms, because there are two kinds of install and neither can serve
+   the other.
+
+   A copy running from a git checkout — what `npm run app:install` produces, and
+   what this machine runs — updates by pulling and rebuilding (updater.cjs).
+   electron-updater cannot do that: it only knows how to run the NSIS installer,
+   which lands somewhere else entirely and would leave two copies.
+
+   Everyone who installed the .exe has no checkout, no Node and no build script,
+   so they get electron-updater against the GitHub release feed. The git check
+   runs first and, when it reports a checkout, wins — otherwise the installed
+   path is used. */
+let feed = null;   // electron-updater, loaded lazily: it throws when unpackaged
+function autoUpdater() {
+  if (!feed) ({ autoUpdater: feed } = require("electron-updater"));
+  feed.autoDownload = false; // 160MB — ask before spending someone's bandwidth
+  feed.autoInstallOnAppQuit = false;
+  return feed;
+}
+const send = (channel, payload) => {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send(channel, payload);
+  }
+};
+
+ipcMain.handle("update:check", async () => {
+  const git = await updater.check({ appPath: app.getAppPath() });
+  if (git.ok) return { kind: "git", ...git };
+  if (!app.isPackaged) return { kind: "none", ok: false, reason: git.reason };
+  try {
+    const up = autoUpdater();
+    up.removeAllListeners("download-progress");
+    up.on("download-progress", (p) => send("update:progress", Math.round(p.percent)));
+    const res = await up.checkForUpdates();
+    const version = res && res.updateInfo && res.updateInfo.version;
+    if (!version || version === app.getVersion()) {
+      return { kind: "app", ok: true, behind: 0, version: app.getVersion() };
+    }
+    return { kind: "app", ok: true, behind: 1, version, current: app.getVersion(),
+             subject: `Version ${version} is available.` };
+  } catch (e) {
+    // no network, no release yet, or a malformed feed — say nothing rather than nag
+    return { kind: "app", ok: false, reason: e.message };
+  }
+});
+
 /* Quit only once the helper is actually running, and a beat later so the reply
    reaches the renderer first. The helper waits on this pid, so quitting before
    it exists would leave it waiting on nothing. */
@@ -145,4 +191,19 @@ ipcMain.handle("update:run", () => {
   const res = updater.run({ appPath: app.getAppPath(), exePath: app.getPath("exe"), pid: process.pid });
   if (res.started) setTimeout(() => app.quit(), 500);
   return res;
+});
+
+// download, then hand over to the installer and restart into the new version
+ipcMain.handle("update:download", async () => {
+  try {
+    const up = autoUpdater();
+    await up.downloadUpdate();
+    return { downloaded: true };
+  } catch (e) {
+    return { downloaded: false, reason: e.message };
+  }
+});
+ipcMain.handle("update:install", () => {
+  try { autoUpdater().quitAndInstall(false, true); return { started: true }; }
+  catch (e) { return { started: false, reason: e.message }; }
 });

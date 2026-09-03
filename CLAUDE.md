@@ -971,14 +971,32 @@ opening it offers "Update & restart", which quits the app, rebuilds it, and
 reopens it. [electron/updater.cjs](electron/updater.cjs) does the git work, [scripts/update.ps1](scripts/update.ps1) does
 the rebuild, [src/update.js](src/update.js) is the renderer seam, `UpdatePill` is the UI.
 
-- **This is deliberately not `electron-updater`.** That updates the *installed*
-  app: it runs the NSIS installer, which lands in `AppData\Local\Programs` — a
-  different directory from the `release/win-unpacked` build this machine
-  actually runs, so it would leave two copies and keep launching the stale one.
-  The installer is also the exact artifact Smart App Control refuses, being
-  downloaded and unsigned. If the app is ever code-signed and distributed by
-  installer, `electron-updater` becomes the right answer for *other people* and
-  can sit alongside this.
+- **There are two mechanisms and each can only serve one kind of install.**
+  `update:check` in `main.cjs` runs the git check first; if it reports a checkout
+  it wins, otherwise the installed path is used, and the reply carries
+  `kind: "git" | "app"` so `UpdatePill` knows which words and which action apply.
+  - **`kind: "git"`** — a copy running from a checkout, which is what
+    `npm run app:install` produces. It pulls and rebuilds. `electron-updater`
+    cannot do this: it only knows how to run the NSIS installer, which lands in
+    `AppData\Local\Programs` — a different directory from
+    `release/win-unpacked` — so it would leave two copies and keep launching the
+    stale one.
+  - **`kind: "app"`** — everyone who installed the `.exe`. `electron-updater`
+    reads `latest.yml` from the GitHub release. `autoDownload` is **off**: the
+    installer is 160MB and that is someone's bandwidth, so the pill asks, reports
+    progress over `update:progress`, and only then restarts into it.
+  - electron-updater is `require`d lazily, because it throws when unpackaged.
+- **The release must carry `latest.yml` and the `.blockmap`, not just the `.exe`.**
+  `latest.yml` is the feed; without it an installed copy can never discover a new
+  version. The `.blockmap` lets it fetch only the changed parts. `package.json`'s
+  `publish` block is what makes electron-builder generate them *and* what bakes
+  `app-update.yml` into the build telling it which repo to read.
+- **Unsigned builds pass `-c.win.verifyUpdateCodeSignature=false`.** With no
+  publisher to check the downloaded installer against, electron-updater refuses
+  the update rather than skipping the check. Signed builds keep the verification,
+  so the workflow only passes the flag on the unsigned branch. Note the `-c.x.y`
+  form works under `bash` but is mangled by PowerShell, which reads it as a
+  config *path* — the workflow uses `shell: bash` throughout for this reason.
 - **The helper is launched with `cmd /c start`, and both halves of that matter.**
   Node's `detached: true` sets `DETACHED_PROCESS` on Windows, which gives the
   child no console — and `powershell.exe` needs one, so it exits before running a

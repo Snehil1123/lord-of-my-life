@@ -87,10 +87,18 @@ jobs:
               -c.win.azureSignOptions.codeSigningAccountName="$SIGN_ACCOUNT" \
               -c.win.azureSignOptions.certificateProfileName="$SIGN_PROFILE" \
               -c.win.azureSignOptions.publisherName="$SIGN_PUBLISHER"
-            echo "Windows installer. Download the .exe below and run it." > notes.md
+            cat > notes.md <<'EOF'
+          Windows installer. Download the .exe below and run it.
+
+          Already have it installed? You don't need this page — the app offers the
+          update to you directly.
+          EOF
           else
+            # An unsigned build has no publisher for electron-updater to check the
+            # downloaded installer against, and it refuses the update rather than
+            # skipping the check. Signed builds keep the verification.
             echo "No AZURE_SIGN_* secrets set — building unsigned."
-            npx electron-builder --win --publish never
+            npx electron-builder --win --publish never -c.win.verifyUpdateCodeSignature=false
             cat > notes.md <<'EOF'
           Windows installer. Download the .exe below and run it.
 
@@ -109,21 +117,23 @@ jobs:
       # that one creates the release as a *draft* by default (invisible to the
       # people you share the link with) and raced with itself uploading multiple
       # artifacts, ending up with two release objects for one tag. Creating the
-      # release explicitly is deterministic, and only the .exe is attached —
-      # latest.yml and the .blockmap exist for auto-update, which this app
-      # doesn't use, and on a release page they're just confusing clutter.
+      # release explicitly is deterministic. latest.yml and the .blockmap go up
+      # too: they are the auto-update feed an installed copy reads.
       - name: Publish to GitHub Releases
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          installer=$(ls release/*.exe)
-          echo "Publishing $installer ($(du -h "$installer" | cut -f1))"
+          # latest.yml is the feed electron-updater reads — without it an installed
+          # copy can never discover a new version. The .blockmap lets it fetch only
+          # the changed parts of a 160MB installer rather than all of it.
+          assets=$(ls release/*.exe release/*.exe.blockmap release/latest.yml)
+          echo "Publishing:"; ls -lh $assets | awk '{print "  " $9 "  " $5}'
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$installer" --clobber
+            gh release upload "$GITHUB_REF_NAME" $assets --clobber
             gh release edit "$GITHUB_REF_NAME" --notes-file notes.md
           else
-            gh release create "$GITHUB_REF_NAME" "$installer" \
+            gh release create "$GITHUB_REF_NAME" $assets \
               --title "$GITHUB_REF_NAME" --notes-file notes.md
           fi

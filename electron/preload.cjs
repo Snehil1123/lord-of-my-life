@@ -41,5 +41,12 @@ contextBridge.exposeInMainWorld("lolCal", {
 contextBridge.exposeInMainWorld("lolUpdate", {
   available: true,
   check: () => ipcRenderer.invoke("update:check"),
-  run: () => ipcRenderer.invoke("update:run"),
+  run: () => ipcRenderer.invoke("update:run"),          // checkout: pull and rebuild
+  download: () => ipcRenderer.invoke("update:download"), // installed: fetch the installer
+  install: () => ipcRenderer.invoke("update:install"),   // installed: restart into it
+  onProgress: (cb) => {
+    const handler = (_e, pct) => cb(pct);
+    ipcRenderer.on("update:progress", handler);
+    return () => ipcRenderer.removeListener("update:progress", handler);
+  },
 });

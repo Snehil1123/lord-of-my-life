@@ -17,6 +17,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.229",
     "@supabase/supabase-js": "^2.112.3",
+    "electron-updater": "^6.8.9",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zod": "^4.4.3"
@@ -46,6 +47,13 @@
     "win": {
       "target": "nsis"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Snehil1123",
+        "repo": "lord-of-my-life"
+      }
+    ],
     "artifactName": "LordOfMyLife-Setup-${version}.${ext}",
     "nsis": {
       "oneClick": false,
