@@ -75,7 +75,8 @@ process — see "AI assistant".)
 
 ```
 data = {
-  settings: { work, short, long, breaks },// pomodoro minutes; breaks:false runs them back to back
+  settings: { work, short, long, breaks,  // pomodoro minutes; breaks:false runs them back to back
+              tabs, textSize, fantasyFont, clock24, sounds },  // the gear, see "Settings"
   pomoLog:  { "YYYY-MM-DD": count },      // completed work sessions per day
   sessionQueue: [taskId],                // tasks lined up in the Session tab
   guests: [{ id, name, tasks: [{ id, title, minutes, est, done, checked }] }],
@@ -1009,6 +1010,40 @@ the rebuild, [src/update.js](src/update.js) is the renderer seam, `UpdatePill` i
 - If any step fails the script says so, notes that nothing was replaced, and
   reopens the version you had. `--dir` builds to a temp directory and renames,
   so a failed build leaves the previous one intact.
+
+## Settings
+
+The gear in the header, `SettingsPanel`. **Deliberately not a tab**, since which
+tabs exist is one of the things it controls — hiding the way back in would be a
+trap.
+
+- Everything lives in `data.settings` and is **read through a helper with a
+  default** (`visibleViews`, `textScale`, `fantasyFont`, and the `!== false`
+  reads for `breaks`/`sounds`), so data saved before a setting existed needs no
+  migration. They sync, unlike `theme`, which stays per-device: these describe
+  the planner, not the machine.
+- **`tabs`** is the visible view keys. Two guards, both load-bearing: the last
+  one can't be removed, and an effect moves `view` to the first visible tab if
+  you hide the one you're standing on — otherwise the app renders a blank page
+  with no way back.
+- **`textSize`** applies `zoom` on the `.fw` root (0.9 / 1 / 1.14). `zoom` scales
+  layout as well as type, which is what makes it a one-line change against an app
+  whose sizes are all hardcoded px. It doesn't disturb the fixed-position
+  `.fscene` or the side panels.
+- **`fantasyFont`** picks from `FANTASY_FONTS` and is applied by writing
+  `--font-display`/`--font-body`/`--font-mono` inline on the root, so it overrides
+  the theme's own tokens without a second `[data-theme]` block. Every family is in
+  the one Google Fonts `@import`; the browser only downloads faces that actually
+  render, so listing them all costs one stylesheet request, not fifteen fonts.
+- **`clock24` and `sounds` are read from module-level mirrors** (`CLOCK_24`,
+  `SOUND_ON`) rather than passed down, because `fmtClock`/`fmtHM` are wanted at
+  every depth and `tone()` isn't a component at all. An effect keeps them in step.
+  Safe *only* because neither can change without `data` changing too, so the
+  render that follows already sees the new value — they are display-only, and
+  nothing may branch on them for state.
+- Times are formatted by `fmtClock` (a Date), `fmtHM` (a stored "HH:MM"), and
+  `fmtMin` (minutes past midnight). Use one of those rather than
+  `toLocaleTimeString` inline, or that spot won't follow the 12/24 setting.
 
 ## Performance
 

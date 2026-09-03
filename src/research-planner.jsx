@@ -15,7 +15,7 @@ import { updaterAvailable, checkForUpdate, runUpdate } from "./update.js";
    ============================================================ */
 
 const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Cinzel:wght@400;600;700;800&family=EB+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Space+Mono:wght@400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Alegreya+SC:wght@400;700&family=Alegreya+Sans:wght@400;500;700&family=Alegreya:wght@400;500;700&family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Cinzel:wght@400;600;700;800&family=Courier+Prime:wght@400;700&family=EB+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Grenze+Gotisch:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Literata:opsz,wght@7..72,400..700&family=Marcellus&family=Space+Mono:wght@400;700&family=Spectral:wght@400;500;600;700&family=Uncial+Antiqua&family=Vollkorn:wght@400;600;700&display=swap');
 
 :root{
   --paper:#171C18; --card:#1E2420; --ink:#E8ECE6; --muted:#8DA091;
@@ -37,9 +37,9 @@ const CSS = `
   --pine:#7C9A5C; --pine-soft:#2A331C;
   --tomato:#B33A2A; --tomato-soft:#3D1B14;
   --amber:#D8A62A; --slate:#5E7A93; --plum:#8C5A96; --teal:#5E8C82;
-  --font-display:'Cinzel',serif;
-  --font-body:'EB Garamond',Georgia,serif;
-  --font-mono:'Space Mono',monospace;
+  --font-display:'Uncial Antiqua',serif;
+  --font-body:'Vollkorn',Georgia,serif;
+  --font-mono:'Courier Prime',monospace;
   --radius:3px;
   font-size:18px;
   background:
@@ -73,7 +73,7 @@ const CSS = `
    run uses --fsz-mono and every prose run uses the body/meta pair. Adding a new
    text style means picking the scale by *font*, not by how small it looks. */
 .fw[data-theme="fantasy"]{
-  --fsz-body:16.5px; --fsz-meta:15.5px; --fsz-mono:13px;
+  --fsz-body:18px; --fsz-meta:17px; --fsz-mono:14px;
 }
 .fw[data-theme="fantasy"] .tasktitle,
 .fw[data-theme="fantasy"] .legendname,
@@ -115,11 +115,11 @@ const CSS = `
 .fw[data-theme="fantasy"] .gaugesub,
 .fw[data-theme="fantasy"] .todaypomos,
 .fw[data-theme="fantasy"] .aitool{font-size:var(--fsz-mono);}
-.fw[data-theme="fantasy"] .archivetoggle{font-size:15px;}
-.fw[data-theme="fantasy"] .catname{font-size:15px;}
-.fw[data-theme="fantasy"] .tab{font-size:16px;}
-.fw[data-theme="fantasy"] .h2{font-size:26px;}
-.fw[data-theme="fantasy"] .projname{font-size:18.5px;}
+.fw[data-theme="fantasy"] .archivetoggle{font-size:16px;}
+.fw[data-theme="fantasy"] .catname{font-size:16.5px;}
+.fw[data-theme="fantasy"] .tab{font-size:17.5px;}
+.fw[data-theme="fantasy"] .h2{font-size:28px;}
+.fw[data-theme="fantasy"] .projname{font-size:20px;}
 .fw[data-theme="fantasy"] .gbar{font-size:14px;}
 .fw[data-theme="fantasy"] .wkchip, .fw[data-theme="fantasy"] .gwk{font-size:var(--fsz-mono);}
 .fw[data-theme="fantasy"] .h2::before{content:"✦ "; color:var(--amber);}
@@ -583,6 +583,44 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .pickpath{font-size:12.5px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .picksub{font-family:var(--font-mono); font-size:11.5px; color:var(--muted); flex:none;}
 .qparent{color:var(--muted); font-size:12px;}
+/* ---------- settings ---------- */
+.setwrap{
+  position:fixed; inset:0; z-index:60; background:rgba(0,0,0,.5);
+  display:flex; justify-content:center; align-items:flex-start; padding:6vh 16px 24px;
+  overflow-y:auto;
+}
+.setpanel{
+  width:100%; max-width:520px; background:var(--card); color:var(--ink);
+  border:1px solid var(--line); border-radius:var(--radius);
+  box-shadow:0 24px 60px rgba(0,0,0,.5); padding:20px 22px 24px;
+}
+.sethead{display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;}
+.setgroup{padding:16px 0; border-top:1px solid var(--line-soft);}
+.setlabel{
+  font-family:var(--font-display); font-weight:700; font-size:13px;
+  text-transform:uppercase; letter-spacing:.08em; color:var(--muted);
+}
+.sethint{margin:6px 0 0; font-size:13px; color:var(--muted); line-height:1.5;}
+.setchips{display:flex; flex-wrap:wrap; gap:7px; margin-top:10px;}
+.setchip{
+  border:1px solid var(--line); background:none; color:var(--muted);
+  border-radius:999px; padding:5px 13px; font-size:13.5px; font-weight:600;
+}
+.setchip:hover{color:var(--ink); border-color:var(--muted);}
+.setchip.on{background:var(--pine); border-color:var(--pine); color:#fff;}
+.setfonts{display:grid; gap:8px; margin-top:10px;}
+.setfont{
+  display:grid; gap:2px; text-align:left; width:100%;
+  border:1px solid var(--line); background:none; color:var(--ink);
+  border-radius:var(--radius); padding:9px 12px;
+}
+.setfont:hover{border-color:var(--muted);}
+.setfont.on{border-color:var(--pine); background:var(--pine-soft);}
+.setfontname{font-size:17px; line-height:1.2;}
+.setfontsample{font-size:15px; color:var(--muted); line-height:1.3;}
+.setfontnote{
+  font-family:var(--font-mono); font-size:11px; color:var(--dim,var(--muted)); opacity:.8;
+}
 .updwrap{position:relative;}
 .updpill{
   display:flex; align-items:center; gap:6px; border:1px solid var(--pine);
@@ -845,7 +883,59 @@ const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
 const timeToMin = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + (m || 0); };
 const minToTime = (n) => `${String(Math.floor(n / 60) % 24).padStart(2, "0")}:${String(Math.round(n) % 60).padStart(2, "0")}`;
 const atTime = (dateStr, timeStr) => new Date(`${dateStr}T${timeStr}:00`);
-const fmtClock = (d) => d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+/* ---------------- user settings ----------------
+   Everything the gear controls. All of it is read through a helper with a
+   default, so data saved before any given setting existed needs no migration.
+   These live in `data.settings` rather than localStorage because they describe
+   the planner rather than the machine — the exception is `theme`, which stays
+   per-device for the reasons in CLAUDE.md. */
+const ALL_VIEWS = [
+  ["work", "Work"], ["personal", "Personal"], ["calendar", "Calendar"],
+  ["gantt", "Gantt Chart"], ["budget", "Budget"], ["session", "Session"],
+];
+const TEXT_SIZES = { small: 0.9, medium: 1, large: 1.14 };
+const FANTASY_FONTS = {
+  uncial: { name: "Uncial Antiqua & Vollkorn", note: "medieval manuscript",
+    display: "'Uncial Antiqua',serif", body: "'Vollkorn',Georgia,serif", mono: "'Courier Prime',monospace" },
+  grenze: { name: "Grenze Gotisch & Alegreya Sans", note: "clearest to read",
+    display: "'Grenze Gotisch',serif", body: "'Alegreya Sans',system-ui,sans-serif", mono: "'IBM Plex Mono',monospace" },
+  marcellus: { name: "Marcellus & Spectral", note: "roman, screen-drawn",
+    display: "'Marcellus',serif", body: "'Spectral',Georgia,serif", mono: "'IBM Plex Mono',monospace" },
+  literata: { name: "Cinzel & Literata", note: "bookish",
+    display: "'Cinzel',serif", body: "'Literata',Georgia,serif", mono: "'IBM Plex Mono',monospace" },
+  alegreya: { name: "Alegreya", note: "one family throughout",
+    display: "'Alegreya SC',serif", body: "'Alegreya',Georgia,serif", mono: "'IBM Plex Mono',monospace" },
+  cinzel: { name: "Cinzel & EB Garamond", note: "the original",
+    display: "'Cinzel',serif", body: "'EB Garamond',Georgia,serif", mono: "'Space Mono',monospace" },
+};
+// never leave the header with nothing in it
+const visibleViews = (data) => {
+  const chosen = data.settings.tabs;
+  const list = ALL_VIEWS.filter(([k]) => !chosen || chosen.includes(k));
+  return list.length ? list : ALL_VIEWS;
+};
+const textScale = (data) => TEXT_SIZES[data.settings.textSize] || 1;
+const fantasyFont = (data) => FANTASY_FONTS[data.settings.fantasyFont] || FANTASY_FONTS.uncial;
+
+/* Two settings are read by plain helpers rather than passed down as props: the
+   clock format, wanted by half a dozen components at every depth, and the sound
+   switch, wanted by `tone()` which is not a component at all. They mirror
+   `data.settings` from an effect. Safe because nothing can change either one
+   without also changing `data`, so the render that follows already sees the new
+   value — but they are display-only, and nothing may branch on them for state. */
+let CLOCK_24 = false;
+let SOUND_ON = true;
+
+const fmtClock = (d) => d.toLocaleTimeString(undefined,
+  CLOCK_24 ? { hour: "2-digit", minute: "2-digit", hour12: false } : { hour: "numeric", minute: "2-digit" });
+// "HH:MM" as stored, rendered the way the user asked to see it
+const fmtHM = (hm) => {
+  if (CLOCK_24) return hm;
+  const [h, m] = hm.split(":").map(Number);
+  const ampm = h < 12 ? "am" : "pm";
+  return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")}${ampm}`;
+};
+const fmtMin = (n) => fmtHM(minToTime(n));
 // the slice of the day the week grid draws; events outside it are clamped in
 const DAY_START = 7 * 60, DAY_END = 22 * 60;
 const fmtMoney = (n) => n.toLocaleString(undefined, { style: "currency", currency: "USD" });
@@ -873,6 +963,7 @@ function taskUrgency(t, now) {
 
 /* ---------------- sounds ---------------- */
 function tone(freqA, freqB, dur = 0.28, vol = 0.12) {
+  if (!SOUND_ON) return;
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     const ctx = (window.__fwAudio = window.__fwAudio || new Ctx());
@@ -1148,6 +1239,19 @@ export default function LordOfMyLife() {
     return () => clearInterval(interval);
   }, []);
 
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  /* Mirror the two display-only settings the plain helpers read. Effects rather
+     than props because fmtClock and tone() are reached from everywhere, and
+     neither can change without `data` changing too. */
+  useEffect(() => { CLOCK_24 = !!data.settings.clock24; }, [data.settings.clock24]);
+  useEffect(() => { SOUND_ON = data.settings.sounds !== false; }, [data.settings.sounds]);
+
+  const views = visibleViews(data);
+  // hiding the tab you're standing on shouldn't leave a blank page
+  useEffect(() => {
+    if (!views.some(([k]) => k === view)) setView(views[0][0]);
+  }, [views, view]);
+
   // see the .fw.idle rule: decoration stops when the window isn't being looked at
   const [idle, setIdle] = useState(false);
   useEffect(() => {
@@ -1232,7 +1336,16 @@ export default function LordOfMyLife() {
 
   return (
     <div className={`fw ${idle ? "idle" : ""} ${aiOpen ? "aiopen" : ""} ${calOpen && view !== "calendar" ? "calopen" : ""}`}
-      data-theme={theme} style={{ "--aiw": `${aiWidth}px`, "--calw": `${calWidth}px` }}>
+      data-theme={theme}
+      style={{
+        "--aiw": `${aiWidth}px`, "--calw": `${calWidth}px`,
+        zoom: textScale(data),
+        ...(theme === "fantasy" ? {
+          "--font-display": fantasyFont(data).display,
+          "--font-body": fantasyFont(data).body,
+          "--font-mono": fantasyFont(data).mono,
+        } : {}),
+      }}>
       <style>{CSS}</style>
       {theme === "fantasy" && <FantasyScene />}
       <header className="hd">
@@ -1242,7 +1355,7 @@ export default function LordOfMyLife() {
         <span className="wkchip">{new Date().toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span>
         {todayPomos > 0 && <span className="todaypomos">{sessionEmoji} ×{todayPomos} today</span>}
         <nav className="tabs">
-          {[["work", "Work"], ["personal", "Personal"], ["calendar", "Calendar"], ["gantt", "Gantt Chart"], ["budget", "Budget"], ["session", "Session"]].map(([k, label]) => (
+          {views.map(([k, label]) => (
             <button key={k} className={`tab ${view === k ? "on" : ""}`} onClick={() => setView(k)}>{label}</button>
           ))}
         </nav>
@@ -1250,9 +1363,14 @@ export default function LordOfMyLife() {
           <button className="btn ghost" title="Show today's calendar" onClick={() => setCalOpen(true)}>▤ Today</button>
         )}
         {!aiOpen && <button className="btn ghost" title={`Open the ${assistantLabel.toLowerCase()}`} onClick={() => setAiOpen(true)}>✦ {assistantLabel}</button>}
+        <button className="btn ghost" title="Settings" aria-label="Settings"
+          onClick={() => setSettingsOpen(true)}>⚙</button>
         <UpdatePill />
         <SyncBar data={data} setData={setData} />
       </header>
+      {settingsOpen && (
+        <SettingsPanel data={data} setData={setData} theme={theme} onClose={() => setSettingsOpen(false)} />
+      )}
       {calOpen && view !== "calendar" && (
         <CalendarPanel data={data} events={allEvents} now={now} plan={plan} setWidth={setCalWidth}
           onClose={() => setCalOpen(false)} />
@@ -1392,6 +1510,95 @@ function UpdatePill() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* The gear. Deliberately not one of the tabs, since which tabs exist is itself
+   one of the things it controls — hiding the way back in would be a trap. */
+function SettingsPanel({ data, setData, theme, onClose }) {
+  const st = data.settings;
+  const set = (patch) => setData((prev) => ({ ...prev, settings: { ...prev.settings, ...patch } }));
+  const shown = st.tabs || ALL_VIEWS.map(([k]) => k);
+  const toggleView = (k) => {
+    const next = shown.includes(k) ? shown.filter((x) => x !== k) : [...shown, k];
+    if (!next.length) return; // the last one stays; an app with no tabs has no way back
+    set({ tabs: ALL_VIEWS.map(([key]) => key).filter((key) => next.includes(key)) });
+  };
+
+  useEffect(() => {
+    const esc = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [onClose]);
+
+  return (
+    <div className="setwrap" onClick={onClose}>
+      <div className="setpanel" role="dialog" aria-label="Settings" onClick={(e) => e.stopPropagation()}>
+        <div className="sethead">
+          <span className="h2">Settings</span>
+          <button className="xbtn" style={{ opacity: 1 }} title="Close" onClick={onClose}>✕</button>
+        </div>
+
+        <div className="setgroup">
+          <div className="setlabel">Tabs</div>
+          <p className="sethint">Which sections appear in the header. Hiding one never deletes anything in it.</p>
+          <div className="setchips">
+            {ALL_VIEWS.map(([k, label]) => (
+              <button key={k} className={`setchip ${shown.includes(k) ? "on" : ""}`}
+                onClick={() => toggleView(k)}>{label}</button>
+            ))}
+          </div>
+        </div>
+
+        <div className="setgroup">
+          <div className="setlabel">Text size</div>
+          <div className="setchips">
+            {["small", "medium", "large"].map((k) => (
+              <button key={k} className={`setchip ${(st.textSize || "medium") === k ? "on" : ""}`}
+                onClick={() => set({ textSize: k })} style={{ textTransform: "capitalize" }}>{k}</button>
+            ))}
+          </div>
+        </div>
+
+        <div className="setgroup">
+          <div className="setlabel">Clock</div>
+          <div className="setchips">
+            <button className={`setchip ${!st.clock24 ? "on" : ""}`} onClick={() => set({ clock24: false })}>12 hour</button>
+            <button className={`setchip ${st.clock24 ? "on" : ""}`} onClick={() => set({ clock24: true })}>24 hour</button>
+          </div>
+        </div>
+
+        <div className="setgroup">
+          <div className="setlabel">Sounds</div>
+          <p className="sethint">The chime when a session ends, and the pop when a task is finished.</p>
+          <div className="setchips">
+            <button className={`setchip ${st.sounds !== false ? "on" : ""}`} onClick={() => set({ sounds: true })}>On</button>
+            <button className={`setchip ${st.sounds === false ? "on" : ""}`} onClick={() => set({ sounds: false })}>Off</button>
+          </div>
+        </div>
+
+        <div className="setgroup">
+          <div className="setlabel">Fantasy lettering</div>
+          <p className="sethint">
+            {theme === "fantasy"
+              ? "Applies as you pick — the page behind this is already wearing it."
+              : "Used by the fantasy theme; click the title in the header to see it."}
+          </p>
+          <div className="setfonts">
+            {Object.entries(FANTASY_FONTS).map(([k, f]) => (
+              <button key={k} className={`setfont ${(st.fantasyFont || "uncial") === k ? "on" : ""}`}
+                onClick={() => set({ fantasyFont: k })}>
+                <span className="setfontname" style={{ fontFamily: f.display }}>{f.name.split(" & ")[0]}</span>
+                <span className="setfontsample" style={{ fontFamily: f.body }}>
+                  Draft the NDSEG personal statement
+                </span>
+                <span className="setfontnote">{f.note}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2270,7 +2477,7 @@ function CalendarDay({ day, data, events, plan, now, onSlotClick, onDelEvent, co
         return (
           <div key={ev.id} className={`calevent phaserow ${short ? "short" : ""} ${ev.source === "google" ? "fromgoogle" : ""}`}
             style={{ ...box, background: cat ? cat.color : ev.source === "google" ? "var(--teal)" : "var(--slate)" }}
-            title={`${ev.title}${cat ? ` · ${cat.name}` : ""} — ${ev.start}–${ev.end}${ev.source === "google" ? " · from Google Calendar" : ""}`}
+            title={`${ev.title}${cat ? ` · ${cat.name}` : ""} — ${fmtHM(ev.start)}–${fmtHM(ev.end)}${ev.source === "google" ? " · from Google Calendar" : ""}`}
             onClick={(e) => e.stopPropagation()}>
             <span className="caleventtitle">{ev.title}</span>
             {/* A short block shows its length, not its span: "09:00-09:10" eats
@@ -2278,7 +2485,7 @@ function CalendarDay({ day, data, events, plan, now, onSlotClick, onDelEvent, co
                 name, while the start time is already what the block's position
                 says. The full range stays in the hover title. */}
             <span className="caleventtime">
-              {short ? `${mins}m` : `${ev.start}–${ev.end}${cat && !compact ? ` · ${cat.name}` : ""}`}
+              {short ? `${mins}m` : `${fmtHM(ev.start)}–${fmtHM(ev.end)}${cat && !compact ? ` · ${cat.name}` : ""}`}
             </span>
             {/* Google events are a mirror of somewhere else; deleting here would
                 be a lie, so only the app's own events get a remove button */}
@@ -2297,7 +2504,7 @@ function CalendarDay({ day, data, events, plan, now, onSlotClick, onDelEvent, co
 }
 
 const CalHours = () => (
-  <div className="calgutter">{CAL_HOURS.map((h) => <div key={h} className="calhour">{minToTime(h)}</div>)}</div>
+  <div className="calgutter">{CAL_HOURS.map((h) => <div key={h} className="calhour">{fmtMin(h)}</div>)}</div>
 );
 
 function CalendarView({ data, setData, now, plan, events, gcal }) {
@@ -3312,7 +3519,7 @@ function PeerColumn({ peer, s, now }) {
         <div className="qfoot">
           <span>Sessions <b>{st.doneEst}/{st.totalEst}</b></span>
           {st.remaining > 0
-            ? <span>Finish at <b>{st.finishAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</b> ({st.fmtSpan})</span>
+            ? <span>Finish at <b>{fmtClock(st.finishAt)}</b> ({st.fmtSpan})</span>
             : <span><b>All done</b></span>}
         </div>
       )}
@@ -3385,7 +3592,7 @@ function GuestColumn({ guest, s, cycle, now, onAddTask, onToggleTask, onDelTask,
         <div className="qfoot">
           <span>Sessions <b>{st.doneEst}/{st.totalEst}</b></span>
           {st.remaining > 0
-            ? <span>Finish at <b>{st.finishAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</b> ({st.fmtSpan})</span>
+            ? <span>Finish at <b>{fmtClock(st.finishAt)}</b> ({st.fmtSpan})</span>
             : <span><b>All done</b></span>}
         </div>
       )}
@@ -3851,7 +4058,7 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
       {queue.length > 0 && (
         <div className="qfoot">
           <span>Sessions <b>{doneEst}/{totalEst}</b></span>
-          {remaining > 0 && <span>Finish at <b>{finishAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</b> ({fmtSpan})</span>}
+          {remaining > 0 && <span>Finish at <b>{fmtClock(finishAt)}</b> ({fmtSpan})</span>}
           {remaining === 0 && <span><b>All done</b> — nothing left in this session.</span>}
           {ignored.length > 0 && (
             <button className="btn ghost" style={{ marginLeft: "auto" }} onClick={unignoreAll}
