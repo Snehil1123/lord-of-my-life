@@ -102,7 +102,11 @@ jobs:
             cat > notes.md <<'EOF'
           Windows installer. Download the .exe below and run it.
 
-          This build isn't code-signed, so Windows will push back:
+          **You should only need this page once.** From this version on, the app
+          checks for updates itself and offers them in the header — downloading a
+          new .exe by hand is no longer part of the routine.
+
+          This build isn't code-signed, so Windows will push back the first time:
 
           - **"Windows protected your PC"** — choose **More info -> Run anyway**.
           - **Smart App Control blocked this app** — there is no bypass for this
