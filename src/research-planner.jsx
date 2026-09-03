@@ -398,10 +398,17 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .catdot{width:9px; height:9px; border-radius:50%;}
 .catname{font-weight:700; font-size:14px; text-transform:uppercase; letter-spacing:.06em;}
 .catcount{font-family:var(--font-mono); font-size:12.5px; color:var(--muted);}
+/* Same wrap as .qrow, and for the same reason — the tags, the length, the dots
+   and three buttons add up to more than half a 480px card, and everything they
+   left over came out of the title. See .qrow for why the basis is auto. */
 .taskrow{
-  display:flex; align-items:center; gap:10px; padding:9px 12px;
+  display:flex; align-items:center; gap:10px; row-gap:6px; flex-wrap:wrap;
+  padding:9px 12px;
   border-bottom:1px solid var(--line-soft); position:relative; background:var(--card);
 }
+.taskmain{display:flex; align-items:center; gap:10px; flex:1 1 auto; min-width:0;}
+.taskrow .tasktitle{flex:1 1 auto; min-width:0;}
+.taskmeta{display:flex; align-items:center; gap:10px; margin-left:auto; flex:0 0 auto;}
 .taskrow:last-child{border-bottom:none;}
 .taskrow.done .tasktitle{color:var(--muted); text-decoration:line-through; text-decoration-color:var(--pine);}
 .taskrow.due-today{border-radius:6px; box-shadow:inset 0 0 0 1px var(--amber), 0 0 10px -2px var(--amber);}
@@ -441,7 +448,10 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
   0%{transform:translate(0,0) scale(1); opacity:1;}
   100%{transform:translate(var(--dx),var(--dy)) scale(.3); opacity:0;}
 }
-.tasktitle{font-size:15px; font-weight:500;}
+/* break-word rather than anywhere: only a word that genuinely cannot fit its
+   line is split, so "EEG/Delsys/Harmony" stops spilling out past the row
+   without ordinary titles being hyphenated at random */
+.tasktitle{font-size:15px; font-weight:500; overflow-wrap:break-word;}
 .tag11{
   font-family:var(--font-mono); font-size:11px; font-weight:600;
   background:var(--pine-soft); color:var(--pine); padding:1px 6px; border-radius:4px; flex:none;
@@ -597,11 +607,29 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .pomonow strong{display:block; color:var(--ink); font-size:16px; font-weight:600; margin-top:2px;}
 .qhead{display:flex; align-items:center; gap:8px; margin:20px 0 8px; border-bottom:1px solid var(--line); padding-bottom:8px;}
 .qhead .h2{font-size:18px;}
+/* The row wraps, and that is what keeps a long title readable. A title and the
+   "finishes this session" pill cannot share one line in a 480px column: the
+   title was squeezed to about 110px, wrapped into a four-line ribbon, and its
+   longest word still spilled out under the pill.
+
+   The threshold is the title's own length, not a fixed fraction: flex-basis
+   auto makes the title's base size its full text width, so a line breaks only
+   when the title really does want the room, and the meta drops underneath it.
+   A short title keeps everything on one line. A fixed basis can't tell the two
+   apart and pushed the meta down even for "Email Sam". */
 .qrow{
-  display:flex; align-items:center; gap:10px; padding:11px 13px; margin-bottom:8px;
+  display:flex; align-items:center; gap:10px; row-gap:6px; flex-wrap:wrap;
+  padding:11px 13px; margin-bottom:8px;
   background:var(--card); border:1px solid var(--line); border-left:5px solid var(--line);
   border-radius:8px; position:relative; cursor:pointer;
 }
+/* The checkbox travels with the title. On its own it is a flex item like any
+   other, so a title a hair too wide to sit beside it wrapped to the next line
+   and left the checkbox stranded alone on the first. Bundled, the only break
+   the row can make is the one it should: the meta, underneath. */
+.qmain{display:flex; align-items:center; gap:10px; flex:1 1 auto; min-width:0;}
+.qtitle{flex:1 1 auto; min-width:0;}
+.qmeta{display:flex; align-items:center; gap:8px; margin-left:auto; flex:0 0 auto;}
 .qrow:hover{border-color:var(--muted);}
 .qrow.active{border-left-color:var(--tomato);}
 .qrow.done .tasktitle{color:var(--muted); text-decoration:line-through; text-decoration-color:var(--pine);}
@@ -2380,40 +2408,46 @@ function TaskRow({ t, burst, onToggle, onToggleAll, onDelete, onEdit, onAddSubta
     <>
       <div className={`taskrow ${t.checked ? "done" : ""} ${burstClass(burst, t.id)} ${drag?.dragging ? "dragging" : ""} ${drag?.over || ""} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}
         {...dragHandlers(drag)} title="Drag to reorder">
-        <span className="checkwrap">
-          <button className={`check ${t.checked ? "on" : ""}`} aria-label={t.checked ? "Mark not done" : "Mark done"}
-            onClick={() => (hasSubs ? onToggleAll() : onToggle(t))}>✓</button>
-          {burst?.id === t.id && burst.kind === "done" && Array.from({ length: 10 }, (_, i) => {
-            const a = (i / 10) * Math.PI * 2;
-            const r = 22 + (i % 3) * 8;
-            const colors = ["var(--tomato)", "var(--pine)", "var(--amber)"];
-            return <span key={i} className="particle" style={{ background: colors[i % 3], "--dx": `${Math.cos(a) * r}px`, "--dy": `${Math.sin(a) * r}px` }} />;
-          })}
-        </span>
-        <span className="tasktitle">{t.title}</span>
-        {inSession && <span className="tagsess" title="Queued in the current session">{sessionEmoji} session</span>}
-        {t.oneOnOne && <span className="tag11">1:1</span>}
-        {t.recurring && <span className="tag11" title="Reopens tomorrow">↻ daily</span>}
-        {t.dueDate && (
-          <span className="tagdue" style={{ color: urgency === "overdue" ? "var(--tomato)" : urgency === "due-today" ? "var(--amber)" : "var(--muted)" }}>
-            due {fmtDue(t.dueDate)}
+        <span className="taskmain">
+          <span className="checkwrap">
+            <button className={`check ${t.checked ? "on" : ""}`} aria-label={t.checked ? "Mark not done" : "Mark done"}
+              onClick={() => (hasSubs ? onToggleAll() : onToggle(t))}>✓</button>
+            {burst?.id === t.id && burst.kind === "done" && Array.from({ length: 10 }, (_, i) => {
+              const a = (i / 10) * Math.PI * 2;
+              const r = 22 + (i % 3) * 8;
+              const colors = ["var(--tomato)", "var(--pine)", "var(--amber)"];
+              return <span key={i} className="particle" style={{ background: colors[i % 3], "--dx": `${Math.cos(a) * r}px`, "--dy": `${Math.sin(a) * r}px` }} />;
+            })}
           </span>
-        )}
-        <span className="taskmin">{t.minutes || t.est * sessionMin} min</span>
-        <span className="pomodots" title={`${t.done}/${t.est} sessions · ${t.minutes || t.est * sessionMin} min`}>
-          {Array.from({ length: Math.min(t.est, 8) }, (_, i) => <span key={i} className={`pdot ${i < t.done ? "f" : ""}`} />)}
-          {t.est > 8 && <span className="pcount">{t.done}/{t.est}</span>}
+          <span className="tasktitle">{t.title}</span>
         </span>
-        {hasSubs && (
-          <span className="subprogress" title="Subtasks complete">
-            {t.subtasks.filter((s) => s.checked).length}/{t.subtasks.length}
+        {/* one flex item, so it drops under the title as a block rather than
+            breaking up across two lines */}
+        <span className="taskmeta">
+          {inSession && <span className="tagsess" title="Queued in the current session">{sessionEmoji} session</span>}
+          {t.oneOnOne && <span className="tag11">1:1</span>}
+          {t.recurring && <span className="tag11" title="Reopens tomorrow">↻ daily</span>}
+          {t.dueDate && (
+            <span className="tagdue" style={{ color: urgency === "overdue" ? "var(--tomato)" : urgency === "due-today" ? "var(--amber)" : "var(--muted)" }}>
+              due {fmtDue(t.dueDate)}
+            </span>
+          )}
+          <span className="taskmin">{t.minutes || t.est * sessionMin} min</span>
+          <span className="pomodots" title={`${t.done}/${t.est} sessions · ${t.minutes || t.est * sessionMin} min`}>
+            {Array.from({ length: Math.min(t.est, 8) }, (_, i) => <span key={i} className={`pdot ${i < t.done ? "f" : ""}`} />)}
+            {t.est > 8 && <span className="pcount">{t.done}/{t.est}</span>}
           </span>
-        )}
-        <button className="subtoggle" onClick={() => setExpanded((e) => !e)} title={expanded ? "Hide subtasks" : "Subtasks"}>
-          {expanded ? "▾" : "▸"}
-        </button>
-        <button className="xbtn" onClick={startEdit} title="Edit task">✎</button>
-        <button className="xbtn" onClick={() => onDelete(t.id)} title="Delete task">✕</button>
+          {hasSubs && (
+            <span className="subprogress" title="Subtasks complete">
+              {t.subtasks.filter((s) => s.checked).length}/{t.subtasks.length}
+            </span>
+          )}
+          <button className="subtoggle" onClick={() => setExpanded((e) => !e)} title={expanded ? "Hide subtasks" : "Subtasks"}>
+            {expanded ? "▾" : "▸"}
+          </button>
+          <button className="xbtn" onClick={startEdit} title="Edit task">✎</button>
+          <button className="xbtn" onClick={() => onDelete(t.id)} title="Delete task">✕</button>
+        </span>
       </div>
       {expanded && (
         <div className="subtasks">
@@ -4204,33 +4238,39 @@ function QueueRow({ entry, data, setData, now, isActive, burst, setBurst, onComp
       <div className={`qrow ${t.checked ? "done" : ""} ${burstClass(burst, burstId)} ${isActive ? "active" : ""} ${drag?.dragging ? "dragging" : ""} ${drag?.over || ""}`}
         onClick={onComplete} title="Click to mark done · drag to reorder"
         {...dragHandlers(drag)}>
-        <span className="checkwrap">
-          <button className={`check ${t.checked ? "on" : ""}`} aria-label={t.checked ? "Mark not done" : "Mark done"}>✓</button>
-          {burst?.id === burstId && burst.kind === "done" && Array.from({ length: 8 }, (_, i) => (
-            <span key={i} className="particle" style={{
-              background: catColorFor(allCats(data), t.cat),
-              "--dx": `${Math.cos((i / 8) * 6.28) * 26}px`,
-              "--dy": `${Math.sin((i / 8) * 6.28) * 26}px`,
-            }} />
-          ))}
+        <span className="qmain">
+          <span className="checkwrap">
+            <button className={`check ${t.checked ? "on" : ""}`} aria-label={t.checked ? "Mark not done" : "Mark done"}>✓</button>
+            {burst?.id === burstId && burst.kind === "done" && Array.from({ length: 8 }, (_, i) => (
+              <span key={i} className="particle" style={{
+                background: catColorFor(allCats(data), t.cat),
+                "--dx": `${Math.cos((i / 8) * 6.28) * 26}px`,
+                "--dy": `${Math.sin((i / 8) * 6.28) * 26}px`,
+              }} />
+            ))}
+          </span>
+          <span className="tasktitle qtitle">
+            {t.title}
+            {isSub && <span className="qparent"> · {entry.task.title}</span>}
+          </span>
         </span>
-        <span className="tasktitle" style={{ flex: 1, minWidth: 0 }}>
-          {t.title}
-          {isSub && <span className="qparent"> · {entry.task.title}</span>}
+        {/* one flex item, so it wraps under the title as a block rather than
+            breaking up across two lines */}
+        <span className="qmeta">
+          {isActive && !t.checked && <SessionMark t={t} />}
+          {subs.length > 0 && <span className="subprogress">{doneSubs}/{subs.length}</span>}
+          <span className="pcount">{t.done}/{t.est}</span>
+          {onTimer && !t.checked && (
+            <button className="subtoggle" style={timing ? { color: "var(--pine)" } : undefined}
+              title={timing ? "This task's timer is running" : "Time just this task — one countdown, no pomodoro"}
+              onClick={stop(onTimer)}>⏱</button>
+          )}
+          {!isSub && (
+            <button className="subtoggle" title={expanded ? "Hide subtasks" : "Subtasks"}
+              onClick={stop(() => setExpanded((v) => !v))}>{expanded ? "▾" : "▸"}</button>
+          )}
+          <button className="xbtn" title="Remove from session" onClick={stop(onRemove)}>✕</button>
         </span>
-        {isActive && !t.checked && <SessionMark t={t} />}
-        {subs.length > 0 && <span className="subprogress">{doneSubs}/{subs.length}</span>}
-        <span className="pcount">{t.done}/{t.est}</span>
-        {onTimer && !t.checked && (
-          <button className="subtoggle" style={timing ? { color: "var(--pine)" } : undefined}
-            title={timing ? "This task's timer is running" : "Time just this task — one countdown, no pomodoro"}
-            onClick={stop(onTimer)}>⏱</button>
-        )}
-        {!isSub && (
-          <button className="subtoggle" title={expanded ? "Hide subtasks" : "Subtasks"}
-            onClick={stop(() => setExpanded((v) => !v))}>{expanded ? "▾" : "▸"}</button>
-        )}
-        <button className="xbtn" title="Remove from session" onClick={stop(onRemove)}>✕</button>
       </div>
 
       {expanded && (

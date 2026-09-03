@@ -70,6 +70,26 @@ process — see "AI assistant".)
   row into an inline edit form (title always; minutes/due date too, unless
   the task has subtasks — see "Subtasks" below). `editTask()` recomputes
   `est` from the edited minutes and clamps `done` so it never exceeds it.
+- **A task row is three flex items, not ten** — `.taskmain` (checkbox + title),
+  `.taskmeta` (tags, length, dots, buttons), and the row wraps between them.
+  `.qrow` in Session is the same shape (`.qmain`/`.qmeta`). Two rules make it
+  work, and both were got wrong first:
+  - The title's `flex-basis` is **`auto`**, so its base size is its own text
+    width and the row breaks only when the title genuinely wants the room. With
+    every control a separate `flex:none` sibling, all the shrink came out of the
+    title — it was squeezed to about 110px in a 480px column, wrapped into a
+    four-line ribbon, and its longest word spilled out from under it. A fixed
+    percentage basis fixes that but can't tell a long title from a short one and
+    drops the meta under "Email Sam" too.
+  - **The checkbox is inside `.taskmain`, not a sibling of it.** On its own it is
+    an ordinary flex item, so a title a hair too wide to sit beside it wrapped to
+    the next line and stranded the checkbox alone on the first.
+  - `.tasktitle` also carries `overflow-wrap:break-word` — `anywhere` would let
+    ordinary titles hyphenate at random, `break-word` only splits a word that
+    cannot fit its line at all.
+  - The fantasy burn/heal lifts `.taskrow.burning > *` above its `::before`
+    cover; those direct children are now the two wrappers, which lifts their
+    subtrees with them, so the effect is unaffected.
 
 ## Data model quick reference
 
