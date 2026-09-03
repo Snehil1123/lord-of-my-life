@@ -28,11 +28,14 @@ See "Releasing" below.
 - **Gantt Chart** — projects broken into dated phases, optionally grouped into
   sections (one per fellowship, say), plus every dated task on one timeline.
 - **Session** — a pomodoro timer with a queue of tasks, showing how many
-  sessions are left and what time you'll finish. You can share a session with
-  someone else, either on the same screen or over the network with a room code.
+  sessions are left and what time you'll finish. Or start a plain countdown for
+  one task, if you'd rather not split it into sittings. You can share a session
+  with someone else, either on the same screen or over the network with a room
+  code.
 - **Calendar** — a week of events with your planned focus sessions drawn over
-  it, so you can see what collides. Connect a Google Calendar (read-only) and
-  those events come in too.
+  it, so you can see what collides. Drag across the grid to block out an event,
+  drag it to move it, drag its edges to change how long it runs. Connect a
+  Google Calendar (read-only) and those events come in too.
 - **Budget** — a month at a glance: fixed costs, spend-down budgets you draw
   against, and one-click presets for things you buy often.
 - **Assistant** — a panel that can edit the planner directly: break a task into

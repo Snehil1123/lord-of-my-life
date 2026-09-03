@@ -545,6 +545,34 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .pomostart:active{transform:translateY(3px); box-shadow:0 2px 0 rgba(0,0,0,.28);}
 .pomoreset{border:none; background:none; color:var(--muted); font-size:13px; margin-left:10px;}
 .pomoreset:hover{color:var(--ink);}
+/* One task, one countdown, no pomodoro. Fixed rather than in the Session tab
+   because the whole point is to start it and go and work somewhere else in the
+   app; it clears the assistant panel the same way the page body does. */
+.tasktimer{
+  position:fixed; right:16px; bottom:16px; z-index:40; width:212px;
+  background:var(--card); border:1px solid var(--line); border-left:4px solid var(--pine);
+  border-radius:10px; padding:10px 12px; box-shadow:0 8px 24px rgba(0,0,0,.35);
+}
+.fw.aiopen .tasktimer{right:calc(var(--aiw) + 16px);}
+.tasktimer.over{border-left-color:var(--tomato);}
+.tasktimerhead{display:flex; align-items:center; gap:6px; margin-bottom:2px;}
+.tasktimerlbl{
+  font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.08em;
+  color:var(--muted); flex:1; min-width:0;
+}
+.tasktimertitle{
+  font-size:13.5px; font-weight:600; color:var(--ink); margin-bottom:4px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.tasktimerdigits{font-family:var(--font-mono); font-size:26px; font-weight:600; letter-spacing:.02em;}
+.tasktimer.over .tasktimerdigits{color:var(--tomato);}
+.tasktimerfoot{display:flex; align-items:center; gap:8px; margin-top:4px;}
+.tasktimerbar{height:3px; background:var(--line-soft); border-radius:2px; overflow:hidden; margin-top:6px;}
+.tasktimerbar span{display:block; height:100%; background:var(--pine); transition:width .3s linear;}
+.tstart{
+  border:none; border-radius:6px; padding:4px 12px; font-size:12px; font-weight:700;
+  letter-spacing:.05em; text-transform:uppercase; background:var(--ink); color:var(--card);
+}
 .pomonow{text-align:center; margin:14px 0 4px; color:var(--muted); font-size:13.5px;}
 .pomonow strong{display:block; color:var(--ink); font-size:16px; font-weight:600; margin-top:2px;}
 .qhead{display:flex; align-items:center; gap:8px; margin:20px 0 8px; border-bottom:1px solid var(--line); padding-bottom:8px;}
@@ -771,6 +799,37 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .gcaldot{width:7px; height:7px; border-radius:50%; background:var(--teal);}
 .calnow{position:absolute; left:0; right:0; height:2px; background:var(--tomato); z-index:3;}
 .calnowdot{position:absolute; left:-3px; top:-3px; width:8px; height:8px; border-radius:50%; background:var(--tomato);}
+/* Planned work that lands on top of a booking — only possible once the booking
+   has been dismissed from the session, since the plan otherwise steps around it.
+   The block covers the right of the event rather than the whole of it, so the
+   event's title (which is left-aligned) stays readable underneath. It needs an
+   opaque ground of its own or the event shows through the tint: the gradient
+   layer is the tint, the colour behind it is the page. */
+.calplan.over{
+  left:38%; z-index:4;
+  background:linear-gradient(var(--tomato-soft),var(--tomato-soft)), var(--paper);
+  border-style:solid;
+}
+.calplan.over .calplantxt{padding-left:4px;}
+/* dragging out a new event, and the same block held while you name it */
+.caldraft{
+  position:absolute; left:2px; right:2px; z-index:6; border-radius:5px;
+  border:1px solid var(--pine); background:var(--pine-soft);
+  display:flex; align-items:flex-start; padding:1px 5px; pointer-events:none;
+}
+.caldrafttxt{font-family:var(--font-mono); font-size:10px; color:var(--ink); white-space:nowrap;}
+.calevent.movable{cursor:grab;}
+.calevent.ghost{opacity:.85; cursor:grabbing; z-index:7;}
+/* Grab strips for the two edges. Only drawn on a block with the height to spare:
+   on a 15-minute event they would cover the whole of it and there would be
+   nowhere left to grab to move the thing. Not ".calgrip" — that name is already
+   the calendar panel's width handle, whose rule comes later in this stylesheet
+   and quietly won, leaving both strips full height and pinned to the right. */
+.calresize{position:absolute; left:0; right:0; height:6px; cursor:ns-resize; z-index:1;}
+.calresize.top{top:0;} .calresize.bottom{bottom:0;}
+.calevent:hover .calresize{background:rgba(255,255,255,.35);}
+.caldraftbar{background:var(--pine-soft);}
+.caldraftwhen{font-family:var(--font-mono); font-size:12px; color:var(--ink); white-space:nowrap;}
 /* an event the session plan has to wait for, shown inline in the queue */
 .qevent{
   display:flex; align-items:center; gap:9px; padding:8px 12px; margin-bottom:8px;
@@ -1354,6 +1413,7 @@ export default function LordOfMyLife() {
 
   // held here, not in SessionView, so the countdown survives switching tabs
   const timer = usePomodoro(data, setData, dataRef, theme);
+  const taskTimer = useTaskTimer(setData, dataRef, theme);
   const authEmail = useAuthEmail();
   const roomQueue = useMemo(
     () => queueItems(data.sessionQueue, data.tasks, data.settings.work).map((q) => q.item),
@@ -1433,7 +1493,7 @@ export default function LordOfMyLife() {
         {view === "calendar" && <CalendarView data={data} setData={setData} now={now} plan={plan} events={allEvents} gcal={gcalState} />}
         {view === "gantt" && <GanttView data={data} setData={setData} now={now} />}
         {view === "work" && <WorkView data={data} setData={setData} now={now} sessionEmoji={sessionEmoji} />}
-        {view === "session" && <SessionView data={data} setData={setData} sessionEmoji={sessionEmoji} now={now} timer={timer} session={session} plan={plan} />}
+        {view === "session" && <SessionView data={data} setData={setData} sessionEmoji={sessionEmoji} now={now} timer={timer} taskTimer={taskTimer} session={session} plan={plan} />}
         {view === "personal" && <PersonalView data={data} setData={setData} now={now} sessionEmoji={sessionEmoji} />}
         {view === "budget" && <BudgetView data={data} setData={setData} now={now} />}
       </main>
@@ -1441,6 +1501,7 @@ export default function LordOfMyLife() {
         <AiPanel dataRef={dataRef} setData={setData} onClose={() => setAiOpen(false)}
           label={assistantLabel} width={aiWidth} setWidth={setAiWidth} />
       )}
+      <TaskTimer timer={taskTimer} />
     </div>
   );
 }
@@ -2622,28 +2683,187 @@ const placeIn = (startMin, endMin) => {
   return { top: `${((top - DAY_START) / CAL_SPAN) * 100}%`, height: `${((bottom - top) / CAL_SPAN) * 100}%` };
 };
 
-function CalendarDay({ day, data, events, plan, now, onSlotClick, onDelEvent, compact }) {
+/* Consecutive sessions of one task are drawn as a single block. A task with four
+   sittings otherwise produced four ~18px slivers with a gap between each, which
+   is unreadable and says nothing the one span doesn't. The short break between
+   two sessions of the same task is absorbed into it; a long break and a booked
+   event are real interruptions and still split the block in two.
+
+   Drawing only: the Session list, the block counts and the finish time all keep
+   reading the plan as planSession laid it down. */
+function mergePlan(plan) {
+  const out = [];
+  let pending = null, last = null;
+  for (const b of plan) {
+    if (b.type === "break") { pending = b; continue; }
+    if (b.type !== "task") {
+      if (pending) { out.push(pending); pending = null; }
+      out.push(b); last = null; continue;
+    }
+    if (last && last.taskId === b.taskId && !(pending && pending.long)) {
+      last.end = b.end; last.of = b.of; last.parts += 1; pending = null; continue;
+    }
+    if (pending) { out.push(pending); pending = null; }
+    last = { ...b, parts: 1 };
+    out.push(last);
+  }
+  if (pending) out.push(pending);
+  return out;
+}
+
+/* ---- dragging on the grid ----
+   Quarter-hour steps, like every other calendar. The pointer is resolved against
+   whichever day column it is actually over rather than the one the gesture
+   started in, which is what lets an event be dragged sideways onto another day;
+   `data-day` on the column is the only thing that has to be looked up. */
+const CAL_SNAP = 15;
+const snapMin = (m) => Math.round(m / CAL_SNAP) * CAL_SNAP;
+function pointAt(e) {
+  const col = document.elementsFromPoint(e.clientX, e.clientY).find((n) => n.dataset?.day);
+  if (!col) return null;
+  const r = col.getBoundingClientRect();
+  const mins = DAY_START + ((e.clientY - r.top) / r.height) * CAL_SPAN;
+  return { dayKey: col.dataset.day, mins: Math.max(DAY_START, Math.min(DAY_END, mins)) };
+}
+
+/* One gesture at a time: drag empty space to size a new event, drag an event to
+   move it, drag either edge to change its length. The live gesture is held in a
+   ref as well as state — the window listeners read it synchronously and must not
+   depend on a re-render having landed since the last mousemove. */
+function useCalDrag(setData, onCreated) {
+  const [gesture, setGesture] = useState(null);
+  const ref = useRef(null);
+  const put = (g) => { ref.current = g; setGesture(g); };
+
+  /* Where the gesture stands with the pointer here. Shared by mousemove and
+     mouseup: the release carries a position of its own, and a fast drag whose
+     last mousemove lagged behind it would otherwise land short of where it was
+     let go. */
+  const advance = (cur, p) => {
+    if (cur.kind === "create") {
+      const a = cur.anchor, b = snapMin(p.mins);
+      const startMin = Math.min(a, b);
+      return { ...cur, startMin, endMin: Math.max(Math.max(a, b), startMin + CAL_SNAP) };
+    }
+    if (cur.kind === "move") {
+      const dur = cur.endMin - cur.startMin;
+      const startMin = Math.max(DAY_START, Math.min(DAY_END - dur, snapMin(p.mins - cur.grab)));
+      return { ...cur, dayKey: p.dayKey, startMin, endMin: startMin + dur };
+    }
+    if (cur.kind === "top") {
+      return { ...cur, startMin: Math.max(DAY_START, Math.min(cur.endMin - CAL_SNAP, snapMin(p.mins))) };
+    }
+    return { ...cur, endMin: Math.min(DAY_END, Math.max(cur.startMin + CAL_SNAP, snapMin(p.mins))) };
+  };
+  const same = (a, b) => a.dayKey === b.dayKey && a.startMin === b.startMin && a.endMin === b.endMin;
+
+  /* The listeners are attached here, in the mousedown itself, rather than by an
+     effect keyed on the gesture. An effect runs after the commit that starts the
+     drag, and everything the mouse does in that gap is lost — a quick click
+     releases before the mouseup listener exists and never opens the naming row
+     at all. They live on window, not the grid, so a pointer that outruns the
+     column keeps the drag. */
+  const detach = useRef(null);
+  useEffect(() => () => detach.current?.(), []);
+
+  const begin = (g) => {
+    put(g);
+    const move = (e) => {
+      const cur = ref.current, p = pointAt(e);
+      if (!cur || !p) return;
+      const next = advance(cur, p);
+      // a mousemove that lands in the same quarter hour is not a change; without
+      // this the whole app re-renders on every pixel of the drag
+      if (same(next, cur)) return;
+      put({ ...next, moved: true });
+    };
+    const up = (e) => {
+      detach.current?.();
+      let cur = ref.current;
+      put(null);
+      if (!cur) return;
+      const p = pointAt(e);
+      if (p) {
+        const next = advance(cur, p);
+        cur = { ...next, moved: cur.moved || !same(next, cur) };
+      }
+      if (cur.kind === "create") {
+        // a click that never moved is a click: give it the hour a click used to
+        const startMin = cur.moved ? cur.startMin : Math.min(DAY_END - 60, cur.startMin);
+        const endMin = cur.moved ? cur.endMin : startMin + 60;
+        onCreated({ dayKey: cur.dayKey, startMin, endMin });
+      } else if (cur.moved) {
+        setData((prev) => ({
+          ...prev,
+          events: (prev.events || []).map((ev) => (ev.id === cur.id
+            ? { ...ev, date: cur.dayKey, start: minToTime(cur.startMin), end: minToTime(cur.endMin) }
+            : ev)),
+        }));
+      }
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    detach.current = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      detach.current = null;
+    };
+  };
+
+  return {
+    gesture,
+    // empty space: start sizing a new event from here
+    onDown: (dayKey, e) => {
+      if (e.button !== 0) return;
+      const p = pointAt(e);
+      if (!p) return;
+      e.preventDefault(); // otherwise the drag selects text across the grid
+      const anchor = snapMin(p.mins);
+      begin({ kind: "create", dayKey, anchor, startMin: anchor, endMin: anchor + CAL_SNAP, moved: false });
+    },
+    // an existing event: move it, or take one of its edges
+    onEventDown: (ev, kind, e) => {
+      if (e.button !== 0) return;
+      const p = pointAt(e);
+      if (!p) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const startMin = timeToMin(ev.start), endMin = timeToMin(ev.end);
+      begin({ kind, id: ev.id, dayKey: ev.date, startMin, endMin, grab: p.mins - startMin, moved: false });
+    },
+  };
+}
+
+function CalendarDay({ day, data, events, plan, now, onDelEvent, compact, drag, draft }) {
   const key = dateKey(day);
   const cats = allCats(data);
   const dayEvents = events.filter((e) => e.date === key && !e.allDay);
-  const dayPlan = plan.filter((b) => b.type !== "event" && dateKey(b.start) === key);
+  const merged = useMemo(() => mergePlan(plan), [plan]);
+  const dayPlan = merged.filter((b) => b.type !== "event" && dateKey(b.start) === key);
   const isToday = key === dateKey(now);
   const nowPct = ((minsOf(now) - DAY_START) / CAL_SPAN) * 100;
+  /* The plan normally steps around anything booked, so these only meet once an
+     event has been dismissed from the session — at which point both have to stay
+     readable rather than one hiding the other. */
+  const evSpans = dayEvents.map((ev) => [timeToMin(ev.start), timeToMin(ev.end)]);
+  const collides = (a, b) => evSpans.some(([s, e]) => s < b && e > a);
 
   return (
-    <div className="calslots" onClick={onSlotClick && ((e) => {
-      const r = e.currentTarget.getBoundingClientRect();
-      const mins = DAY_START + Math.floor(((e.clientY - r.top) / r.height) * CAL_SPAN / 30) * 30;
-      onSlotClick(day, Math.max(DAY_START, Math.min(DAY_END - 30, mins)));
-    })}>
+    <div className="calslots" data-day={key} onMouseDown={drag && ((e) => drag.onDown(key, e))}>
       {CAL_HOURS.slice(0, -1).map((h) => <div key={h} className="calslot" />)}
 
       {dayPlan.map((b, i) => {
-        const box = placeIn(minsOf(b.start), minsOf(b.end));
+        const from = minsOf(b.start), to = minsOf(b.end);
+        const box = placeIn(from, to);
         if (!box) return null;
+        const over = b.type === "task" && collides(from, to);
         return (
-          <div key={i} className={`calplan ${b.type}`} style={box}
-            title={b.type === "task" ? `${b.title} — session ${b.n} of ${b.of}` : b.long ? "long break" : "break"}>
+          <div key={i} className={`calplan ${b.type} ${over ? "over" : ""}`} style={box}
+            title={b.type !== "task"
+              ? (b.long ? "long break" : "break")
+              : b.parts > 1
+                ? `${b.title} — sessions ${b.n}–${b.n + b.parts - 1} of ${b.of}`
+                : `${b.title} — session ${b.n} of ${b.of}`}>
             {b.type === "task" && <span className="calplantxt">{b.title}</span>}
           </div>
         );
@@ -2656,11 +2876,19 @@ function CalendarDay({ day, data, events, plan, now, onSlotClick, onDelEvent, co
         // 44px an hour, and two stacked lines need about 31px of it
         const mins = timeToMin(ev.end) - timeToMin(ev.start);
         const short = mins < 45;
+        // Google's events are a mirror of somewhere else and can't be edited here
+        const movable = drag && ev.source !== "google";
+        // below half an hour the two grips would cover the whole block and leave
+        // nothing to grab hold of to move it
+        const grips = movable && mins >= 30;
         return (
-          <div key={ev.id} className={`calevent phaserow ${short ? "short" : ""} ${ev.source === "google" ? "fromgoogle" : ""}`}
+          <div key={ev.id} className={`calevent phaserow ${short ? "short" : ""} ${ev.source === "google" ? "fromgoogle" : ""} ${movable ? "movable" : ""} ${drag?.gesture?.id === ev.id ? "ghost" : ""}`}
             style={{ ...box, background: cat ? cat.color : ev.source === "google" ? "var(--teal)" : "var(--slate)" }}
-            title={`${ev.title}${cat ? ` · ${cat.name}` : ""} — ${fmtHM(ev.start)}–${fmtHM(ev.end)}${ev.source === "google" ? " · from Google Calendar" : ""}`}
+            title={`${ev.title}${cat ? ` · ${cat.name}` : ""} — ${fmtHM(ev.start)}–${fmtHM(ev.end)}${ev.source === "google" ? " · from Google Calendar" : ""}${movable ? " · drag to move, edges to resize" : ""}`}
+            onMouseDown={movable ? ((e) => drag.onEventDown(ev, "move", e)) : undefined}
             onClick={(e) => e.stopPropagation()}>
+            {grips && <span className="calresize top" onMouseDown={(e) => drag.onEventDown(ev, "top", e)} />}
+            {grips && <span className="calresize bottom" onMouseDown={(e) => drag.onEventDown(ev, "bottom", e)} />}
             <span className="caleventtitle">{ev.title}</span>
             {/* A short block shows its length, not its span: "09:00-09:10" eats
                 two thirds of a day column and leaves four characters for the
@@ -2677,6 +2905,15 @@ function CalendarDay({ day, data, events, plan, now, onSlotClick, onDelEvent, co
           </div>
         );
       })}
+
+      {draft && draft.dayKey === key && (() => {
+        const box = placeIn(draft.startMin, draft.endMin);
+        return box && (
+          <div className="caldraft" style={box}>
+            <span className="caldrafttxt">{fmtMin(draft.startMin)}–{fmtMin(draft.endMin)}</span>
+          </div>
+        );
+      })()}
 
       {isToday && nowPct >= 0 && nowPct <= 100 && (
         <div className="calnow" style={{ top: `${nowPct}%` }}><span className="calnowdot" /></div>
@@ -2705,11 +2942,34 @@ function CalendarView({ data, setData, now, plan, events, gcal }) {
   };
   const delEvent = (id) => setData((prev) => ({ ...prev, events: (prev.events || []).filter((e) => e.id !== id) }));
 
-  // clicking an empty slot prefills the form rather than opening a popover
-  const slotClick = (day, minutes) => {
-    setForm((f) => ({ ...f, date: dateKey(day), start: minToTime(minutes), end: minToTime(Math.min(DAY_END, minutes + 60)), title: "" }));
+  /* Dragging out a slot doesn't create anything on its own — it hands back a
+     range to be named. The block stays drawn on the grid meanwhile, so what you
+     are naming is visible while you type it. */
+  const [naming, setNaming] = useState(null);
+  const drag = useCalDrag(setData, (sel) => {
+    setNaming({ ...sel, title: "", cat: "" });
     setTimeout(() => titleRef.current?.focus(), 0);
+  });
+  const commitNaming = () => {
+    const title = naming?.title.trim();
+    if (!title) return;
+    const ev = {
+      id: uid(), title, cat: naming.cat, date: naming.dayKey,
+      start: minToTime(naming.startMin), end: minToTime(naming.endMin),
+    };
+    setData((prev) => ({ ...prev, events: [...(prev.events || []), ev] }));
+    setNaming(null);
   };
+  const g = drag.gesture;
+  const draft = g?.kind === "create"
+    ? { dayKey: g.dayKey, startMin: g.startMin, endMin: g.endMin }
+    : naming;
+  // an event being dragged is drawn where the pointer has it, not where it's stored
+  const shown = useMemo(() => (
+    !g || g.kind === "create" ? events : events.map((e) => (e.id === g.id
+      ? { ...e, date: g.dayKey, start: minToTime(g.startMin), end: minToTime(g.endMin) }
+      : e))
+  ), [events, g]);
 
   const todayKey = dateKey(now);
 
@@ -2738,7 +2998,7 @@ function CalendarView({ data, setData, now, plan, events, gcal }) {
                   {d.toLocaleDateString(undefined, { weekday: "short" })} <b>{d.getDate()}</b>
                 </div>
                 <div className="calalldays">
-                  {events.filter((e) => e.allDay && e.date === key).map((e) => (
+                  {shown.filter((e) => e.allDay && e.date === key).map((e) => (
                     <span key={e.id} className="calduechip allday" title={`all day — ${e.title}`}>{e.title}</span>
                   ))}
                   {dueHere.map((t) => (
@@ -2746,15 +3006,44 @@ function CalendarView({ data, setData, now, plan, events, gcal }) {
                       style={{ background: catColorFor(allCats(data), t.cat) }}>{t.title}</span>
                   ))}
                 </div>
-                <CalendarDay day={d} data={data} events={events} plan={plan} now={now}
-                  onSlotClick={slotClick} onDelEvent={delEvent} />
+                <CalendarDay day={d} data={data} events={shown} plan={plan} now={now}
+                  drag={drag} draft={draft} onDelEvent={delEvent} />
               </div>
             );
           })}
         </div>
 
+        {naming ? (
+          <div className="addrow caldraftbar">
+            {/* same shape as the column header above it, rather than whatever
+                order toLocaleDateString picks for a weekday-and-day format */}
+            <span className="caldraftwhen">
+              {new Date(`${naming.dayKey}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" })}
+              {" "}{new Date(`${naming.dayKey}T12:00:00`).getDate()}
+              {" · "}{fmtMin(naming.startMin)}–{fmtMin(naming.endMin)}
+            </span>
+            <input className="field" ref={titleRef} style={{ flex: 1, minWidth: 150 }} placeholder="Name this event"
+              value={naming.title} onChange={(e) => setNaming({ ...naming, title: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitNaming();
+                if (e.key === "Escape") setNaming(null);
+              }} />
+            <select className="field" value={naming.cat} onChange={(e) => setNaming({ ...naming, cat: e.target.value })}
+              title="Category (optional) — colours the event">
+              <option value="">No category</option>
+              <optgroup label="Work">
+                {catsIn(data, "work").map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </optgroup>
+              <optgroup label="Personal">
+                {catsIn(data, "personal").map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </optgroup>
+            </select>
+            <button className="btn primary" disabled={!naming.title.trim()} onClick={commitNaming}>Add event</button>
+            <button className="btn ghost" onClick={() => setNaming(null)}>Cancel</button>
+          </div>
+        ) : (
         <div className="addrow">
-          <input className="field" ref={titleRef} style={{ flex: 1, minWidth: 150 }} placeholder="Event (e.g. Lab meeting)"
+          <input className="field" style={{ flex: 1, minWidth: 150 }} placeholder="Event (e.g. Lab meeting)"
             value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })}
             onKeyDown={(e) => e.key === "Enter" && addEvent()} />
           <select className="field" value={form.cat} onChange={(e) => setForm({ ...form, cat: e.target.value })}
@@ -2773,9 +3062,12 @@ function CalendarView({ data, setData, now, plan, events, gcal }) {
           <input type="time" className="field" value={form.end} onChange={(e) => setForm({ ...form, end: e.target.value })} />
           <button className="btn primary" onClick={addEvent}>Add event</button>
         </div>
+        )}
       </div>
       <div className="sub" style={{ marginTop: 10 }}>
-        Click any slot to start an event there. Queued session work is drawn in outline and steps over anything booked.
+        Drag across the grid to block out an event, then name it. Drag an event to move it to another
+        time or day, or take its top or bottom edge to change how long it runs. Queued session work is
+        drawn in outline and steps over anything booked.
       </div>
     </div>
   );
@@ -3574,6 +3866,95 @@ function usePomodoro(data, setData, dataRef, theme) {
   return { mode, left, running, cycle, durFor, switchMode, reset, start, setLeft };
 }
 
+/* One task, one countdown, no pomodoro — for work that isn't worth splitting
+   into sittings. The length is simply what the task has left, so there is
+   nothing to configure. Held in LordOfMyLife next to usePomodoro for the same
+   reason: inside a view, both the state and the interval would die on a tab
+   switch. The two run independently; starting one doesn't touch the other. */
+function useTaskTimer(setData, dataRef, theme) {
+  const [state, setState] = useState(null);
+  const stateRef = useRef(null);
+  useEffect(() => { stateRef.current = state; }, [state]);
+  const themeRef = useRef(theme);
+  useEffect(() => { themeRef.current = theme; }, [theme]);
+  const endRef = useRef(null), tickRef = useRef(null);
+
+  const startFor = (entry) => {
+    askNotifyPermission();
+    const mins = Math.max(1, minutesLeft(entry.item, dataRef.current.settings.work));
+    setState({
+      qid: entry.qid, taskId: entry.task.id, sub: !!entry.sub, title: entry.item.title,
+      total: mins * 60, left: mins * 60, running: true, over: false,
+    });
+  };
+  const toggle = () => setState((s) => (s && !s.over ? { ...s, running: !s.running } : s));
+  const stop = () => setState(null);
+
+  const finish = () => {
+    const s = stateRef.current;
+    if (!s) return;
+    endSound(themeRef.current);
+    notify("Timer finished", `${s.title} — that's the time you gave it.`);
+    /* The timer ran the task's whole remaining length, so its sessions are
+       accounted for. A queued subtask is ticked off by hand everywhere else in
+       the app and isn't a pomodoro, so it's credited nothing — same rule the
+       pomodoro follows. Stopping early credits nothing either way. */
+    if (!s.sub) {
+      setData((prev) => ({
+        ...prev,
+        tasks: prev.tasks.map((t) => (t.id === s.taskId ? { ...t, done: t.est } : t)),
+      }));
+    }
+    // left standing at zero rather than cleared, or a timer that ran out while
+    // you were on another tab would leave no trace that it had
+    setState((p) => (p ? { ...p, left: 0, running: false, over: true } : p));
+  };
+
+  useEffect(() => {
+    if (!state?.running) { clearInterval(tickRef.current); return; }
+    endRef.current = Date.now() + state.left * 1000;
+    tickRef.current = setInterval(() => {
+      const remain = Math.max(0, Math.round((endRef.current - Date.now()) / 1000));
+      // same as the pomodoro: polled often, but only re-rendered when the
+      // displayed second actually moves
+      setState((s) => (!s || s.left === remain ? s : { ...s, left: remain }));
+      if (remain === 0) { clearInterval(tickRef.current); finish(); }
+    }, 250);
+    return () => clearInterval(tickRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.running, state?.qid]);
+
+  return { state, startFor, toggle, stop };
+}
+
+/* Fixed to the corner rather than living in the Session tab: the point of it is
+   to start a countdown and then go and work elsewhere in the app. */
+function TaskTimer({ timer }) {
+  const s = timer.state;
+  if (!s) return null;
+  const mm = String(Math.floor(s.left / 60)).padStart(2, "0");
+  const ss = String(s.left % 60).padStart(2, "0");
+  return (
+    <div className={`tasktimer ${s.over ? "over" : ""}`}>
+      <div className="tasktimerhead">
+        <span className="tasktimerlbl">{s.over ? "Time's up" : "Task timer"}</span>
+        <button className="xbtn" style={{ opacity: 1 }} title="Stop timer" onClick={timer.stop}>✕</button>
+      </div>
+      <div className="tasktimertitle" title={s.title}>{s.title}</div>
+      <div className="tasktimerdigits">{mm}:{ss}</div>
+      <div className="tasktimerbar">
+        <span style={{ width: `${(1 - s.left / s.total) * 100}%` }} />
+      </div>
+      {!s.over && (
+        <div className="tasktimerfoot">
+          <button className="tstart" onClick={timer.toggle}>{s.running ? "Pause" : "Resume"}</button>
+          <span className="catcount">{Math.round(s.total / 60)} min</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---------------- shared focus room ----------------
    Everyone in the room publishes their own queue through presence; the host
    additionally publishes the timer, and everyone else renders from it. Making
@@ -3785,7 +4166,7 @@ function GuestColumn({ guest, s, cycle, now, onAddTask, onToggleTask, onDelTask,
 /* A queued task. The subtask list is a *sibling* of .qrow, not a child — the row
    itself completes the task on click, so nesting the subtasks inside it would
    mean checking a subtask also ticked off its parent. */
-function QueueRow({ entry, data, setData, now, isActive, burst, setBurst, onComplete, onRemove, drag }) {
+function QueueRow({ entry, data, setData, now, isActive, burst, setBurst, onComplete, onRemove, onTimer, timing, drag }) {
   const [expanded, setExpanded] = useState(false);
   const t = entry.item;
   // A queued subtask is one line of work, not a container: it shows its parent
@@ -3818,6 +4199,11 @@ function QueueRow({ entry, data, setData, now, isActive, burst, setBurst, onComp
         {isActive && !t.checked && <SessionMark t={t} />}
         {subs.length > 0 && <span className="subprogress">{doneSubs}/{subs.length}</span>}
         <span className="pcount">{t.done}/{t.est}</span>
+        {onTimer && !t.checked && (
+          <button className="subtoggle" style={timing ? { color: "var(--pine)" } : undefined}
+            title={timing ? "This task's timer is running" : "Time just this task — one countdown, no pomodoro"}
+            onClick={stop(onTimer)}>⏱</button>
+        )}
         {!isSub && (
           <button className="subtoggle" title={expanded ? "Hide subtasks" : "Subtasks"}
             onClick={stop(() => setExpanded((v) => !v))}>{expanded ? "▾" : "▸"}</button>
@@ -3964,7 +4350,7 @@ function QueuePicker({ data, queueIds, onAdd, onClose }) {
   );
 }
 
-function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = [] }) {
+function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, session, plan = [] }) {
   const s = data.settings;
   const breaks = breaksOn(s);
   const [roomInput, setRoomInput] = useState("");
@@ -4182,6 +4568,7 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
         <QueueRow entry={q} data={data} setData={setData} now={now}
           isActive={!!active && t.id === active.id} burst={burst} setBurst={setBurst}
           onComplete={() => completeTask(q)} onRemove={() => removeFromQueue(q.qid)}
+          onTimer={taskTimer && (() => taskTimer.startFor(q))} timing={taskTimer?.state?.qid === q.qid}
           drag={qDrag(q.qid)} />
         {(blockers[t.id]?.during || []).map((ev) => (
           <div className="qevent during" key={ev.id} title="This lands in the middle of the task above">

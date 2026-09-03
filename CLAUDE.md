@@ -217,8 +217,53 @@ are deliberately not built yet.
 - **`CalendarDay` is the one column implementation**, shared by both: the week
   view renders seven, the panel renders one. Same hour bars, same now line, same
   event and plan geometry (`placeIn`, `CAL_HOURS`), so the two can't drift apart.
-  The panel passes `compact` to drop the category label, and omits the slot-click
+  The panel passes `compact` to drop the category label, and omits the `drag`
   and delete handlers to make itself read-only.
+- **The grid is dragged, not just clicked** (`useCalDrag`, above `CalendarDay`).
+  One gesture at a time: drag empty space to size a new event, drag an event to
+  move it to another time or day, drag either edge (`.calresize`) to change its
+  length. Everything snaps to `CAL_SNAP` (15 minutes). Points that matter:
+  - **The window listeners are attached inside the mousedown**, not by an effect
+    keyed on the gesture. A passive effect runs after the commit that starts the
+    drag, and everything the mouse does in that gap is lost — a quick click
+    releases before the mouseup listener exists and never opens the naming row at
+    all. They go on `window` rather than the column so a pointer that outruns the
+    grid keeps the drag, the same reasoning as the panel resize handles.
+  - **The mouseup position is applied, not just the last mousemove.** A fast drag
+    whose final mousemove lagged the release otherwise lands short of where it
+    was let go; `advance()` is shared by both handlers so they can't disagree.
+  - The pointer is resolved against **whichever column it is actually over**
+    (`pointAt` → `data-day` via `elementsFromPoint`), which is the whole of what
+    makes an event draggable sideways onto another day. Ratios are taken from
+    `getBoundingClientRect`, so the root's `zoom` cancels out.
+  - **The live gesture lives in a ref as well as state.** The listeners read it
+    synchronously and must not depend on a re-render having landed since the last
+    mousemove — same rule as the task and section drags.
+  - Dragging out a slot **creates nothing**; it hands a range to `CalendarView`,
+    which draws it as a `.caldraft` block and swaps the add-row for a naming row.
+    A popover anchored to the block would be clipped: `.calcard` and `.calgrid`
+    both establish overflow, and a day column is too narrow to hold one anyway.
+  - Resize grips are only drawn on a block of 30 minutes or more — on a shorter
+    one the two 6px strips would cover the whole of it and leave nothing to grab
+    to move it. Google's events get no handlers at all; they aren't ours to edit.
+  - The grips are `.calresize`, **not `.calgrip`** — that name is already the
+    calendar panel's width handle, whose rule comes later in `CSS` and silently
+    won, leaving both strips full height and pinned to the right edge.
+- **Consecutive sessions of one task draw as a single block** (`mergePlan`, above
+  `CalendarDay`). Four sittings otherwise produced four ~18px slivers with a gap
+  between each, which is unreadable and says nothing the one span doesn't. The
+  short break between two sessions of the same task is absorbed into the block; a
+  long break and a booked event are real interruptions and still split it. This
+  is a **drawing decision only** — the Session list, the block counts and the
+  finish time all keep reading the plan as `planSession` laid it down, and
+  `mergePlan` copies rather than mutating the blocks they share.
+- **Planned work that lands on top of a booking is drawn over it, not instead of
+  it** (`.calplan.over`). This is only reachable once an event has been dismissed
+  from the session, since the plan otherwise steps around everything booked. The
+  block covers the right of the event rather than the whole of it, so the event's
+  left-aligned title stays readable underneath, and it needs an opaque ground of
+  its own (a gradient layer over `var(--paper)`) or the event shows through the
+  tint.
 - **Google Calendar is read-only and pulled, not stored.** `electron/gcal.cjs`
   owns the OAuth (Authorization Code + PKCE, loopback redirect on 127.0.0.1) and
   the fetching; `src/gcal.js` is the renderer seam and does the only conversion
@@ -342,6 +387,24 @@ looking for the old `.timerring` SVG, it was replaced by `.pomoprog`.
   the permission without prompting; a browser asks, and `askNotifyPermission()`
   is called from Start rather than on load so the prompt is tied to an action.
   `notify` silently does nothing when permission isn't granted.
+- **A single task can be timed on its own**, without the pomodoro — `useTaskTimer`
+  plus the fixed-corner `TaskTimer` card, started by the ⏱ on any queue row. It
+  is a second, independent clock, not a mode of the first: starting one doesn't
+  touch the other, and the two are alternatives only by choice.
+  - It lives in `LordOfMyLife` beside `usePomodoro` for the same reason — inside
+    a view, both the state and the interval die on a tab switch — and the card is
+    `position:fixed` precisely so you can start it and go and work on another tab.
+    It clears the assistant panel through `--aiw`, the same as the page body.
+  - **The length is simply `minutesLeft` of the task**, so there is nothing to
+    configure. Finishing naturally credits `done = est`: the timer ran the task's
+    whole remaining length, so its sessions are accounted for. Stopping early
+    credits nothing, and a queued **subtask** is credited nothing either way —
+    it's ticked off by hand everywhere else and isn't a pomodoro, the same rule
+    `usePomodoro`'s `onComplete` follows.
+  - **Nothing is written to `pomoLog`** — it isn't a pomodoro and shouldn't move
+    the day's count.
+  - The card is left standing at `00:00` rather than cleared, or a timer that ran
+    out while you were on another tab would leave no trace that it had.
 - `QueueRow` renders its subtask list as a **sibling** of `.qrow`, never a
   child: the row's own click completes the task, so nesting them would mean
   ticking a subtask also ticked off its parent. Its buttons stop propagation
