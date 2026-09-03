@@ -883,6 +883,60 @@ const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
 const timeToMin = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + (m || 0); };
 const minToTime = (n) => `${String(Math.floor(n / 60) % 24).padStart(2, "0")}:${String(Math.round(n) % 60).padStart(2, "0")}`;
 const atTime = (dateStr, timeStr) => new Date(`${dateStr}T${timeStr}:00`);
+/* ---------------- sync bookkeeping ----------------
+   Per-device, and deliberately not inside `data` — it describes this machine's
+   relationship with the cloud row, not the planner.
+
+   `base` is the updated_at of the cloud row this device last agreed with, and
+   `dirty` says we hold edits the server has not acknowledged. Together they
+   answer the only question that matters on reconnect, without ever comparing two
+   machines' clocks: if the row still reads `base`, nothing else has touched it
+   and our edits are simply newer, so they go up. If it has moved on and we are
+   dirty, both sides changed and the user gets to choose. */
+const SYNC_KEY = "lordofmylife:sync";
+const loadSync = () => {
+  try { return JSON.parse(localStorage.getItem(SYNC_KEY)) || { base: null, dirty: false }; }
+  catch (e) { return { base: null, dirty: false }; }
+};
+const saveSync = (v) => {
+  try { localStorage.setItem(SYNC_KEY, JSON.stringify(v)); } catch (e) { /* unavailable */ }
+};
+
+/* The whole reconnect decision, as a pure function, because it is the piece that
+   loses people's work when it is wrong and it must be testable without a network:
+
+     push — the cloud has nothing, or has not moved since we last agreed, so our
+            edits are the only new ones. This is the offline case.
+     pull — we hold nothing unsynced, so the cloud is authoritative.
+     ask  — both sides moved. Unguessable, so the user decides and nothing is
+            touched until they do.
+
+   Note what is absent: any comparison of timestamps between machines. Two
+   devices' clocks disagree, and a device whose clock is behind would otherwise
+   lose every edit it made. */
+function syncPlan({ row, base, dirty }) {
+  if (!row) return "push";
+  if (!dirty) return "pull";
+  return row.updated_at === base ? "push" : "ask";
+}
+
+/* What actually differs, in the terms the user thinks in. Compared by id so a
+   reordered array doesn't read as a change. */
+const COLLECTIONS = [["tasks", "tasks"], ["events", "calendar events"], ["projects", "projects"], ["archive", "archived tasks"]];
+function diffData(mine, theirs) {
+  const out = [];
+  for (const [key, label] of COLLECTIONS) {
+    const a = mine?.[key] || [], b = theirs?.[key] || [];
+    const bIds = new Set(b.map((x) => x.id)), aIds = new Set(a.map((x) => x.id));
+    const onlyMine = a.filter((x) => !bIds.has(x.id));
+    const onlyTheirs = b.filter((x) => !aIds.has(x.id));
+    if (onlyMine.length || onlyTheirs.length) {
+      out.push({ label, onlyMine, onlyTheirs });
+    }
+  }
+  return out;
+}
+
 /* ---------------- user settings ----------------
    Everything the gear controls. All of it is read through a helper with a
    default, so data saved before any given setting existed needs no migration.
@@ -1514,6 +1568,48 @@ function UpdatePill() {
   );
 }
 
+/* Shown only when both this device and the cloud changed since they last agreed.
+   Every other case resolves itself; this one cannot be guessed, so it asks — and
+   until it is answered nothing is pushed and nothing is overwritten. */
+function ConflictDialog({ diff, onKeepMine, onKeepCloud }) {
+  const sample = (list) => list.slice(0, 4).map((x) => x.title || x.name).filter(Boolean);
+  return (
+    <div className="setwrap">
+      <div className="setpanel" role="dialog" aria-label="Sync conflict">
+        <div className="sethead"><span className="h2">This device and the cloud disagree</span></div>
+        <p className="sethint" style={{ marginBottom: 4 }}>
+          Both changed since they were last in step — most likely this device was offline while
+          another one kept going. Nothing has been overwritten. Pick which version to keep;
+          the other is replaced, so check the list first.
+        </p>
+        <div className="setgroup">
+          {diff.map(({ label, onlyMine, onlyTheirs }) => (
+            <div key={label} style={{ marginBottom: 12 }}>
+              <div className="setlabel">{label}</div>
+              {onlyMine.length > 0 && (
+                <p className="sethint">
+                  <b style={{ color: "var(--pine)" }}>Only on this device ({onlyMine.length}):</b>{" "}
+                  {sample(onlyMine).join(", ")}{onlyMine.length > 4 ? ` and ${onlyMine.length - 4} more` : ""}
+                </p>
+              )}
+              {onlyTheirs.length > 0 && (
+                <p className="sethint">
+                  <b style={{ color: "var(--slate)" }}>Only in the cloud ({onlyTheirs.length}):</b>{" "}
+                  {sample(onlyTheirs).join(", ")}{onlyTheirs.length > 4 ? ` and ${onlyTheirs.length - 4} more` : ""}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button className="btn" onClick={onKeepCloud}>Keep the cloud's</button>
+          <button className="btn primary" onClick={onKeepMine}>Keep this device's</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* The gear. Deliberately not one of the tabs, since which tabs exist is itself
    one of the things it controls — hiding the way back in would be a trap. */
 function SettingsPanel({ data, setData, theme, onClose }) {
@@ -1610,6 +1706,9 @@ function SyncBar({ data, setData }) {
   const [authError, setAuthError] = useState("");
   const pushTimer = useRef(null);
   const skipNextPush = useRef(false); // true while applying a remote update, so we don't echo it straight back
+  const dataRef = useRef(data);
+  useEffect(() => { dataRef.current = data; }, [data]);
+  const [conflict, setConflict] = useState(null); // { mine, theirs, diff }
 
   useEffect(() => {
     if (!supabase) return;
@@ -1618,45 +1717,96 @@ function SyncBar({ data, setData }) {
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  // on sign-in: pull the cloud row (or seed it from local data), then listen for remote changes
+  const applyRemote = (remote, base) => {
+    skipNextPush.current = true;
+    saveSync({ base, dirty: false });
+    setData(hydrate(remote));
+  };
+  const pushLocal = async (payload) => {
+    const at = await pushCloudData(session.user.id, payload);
+    saveSync({ base: at, dirty: false });
+    setStatus("synced");
+  };
+
+  /* Reconcile against the cloud row. Runs on sign-in, on reconnect, and on
+     refocus — anywhere the two sides might have drifted apart.
+
+     The old version pulled unconditionally, which is what deleted a day of
+     offline work: edits made with no connection sat in localStorage, the next
+     launch fetched the untouched cloud row on top of them, and the push that
+     followed wrote the loss back up permanently. Nothing here overwrites local
+     data unless we know the cloud is strictly ahead. */
+  const reconcile = async () => {
+    if (!supabase || !session || conflict) return;
+    setStatus("connecting");
+    try {
+      const row = await fetchCloudData(session.user.id);
+      const { base, dirty } = loadSync();
+      const mine = dataRef.current;
+
+      const plan = syncPlan({ row, base, dirty });
+      if (plan === "push") { await pushLocal(mine); return; }
+      if (plan === "pull") { applyRemote(row.data, row.updated_at); setStatus("synced"); return; }
+
+      // both sides moved since we last agreed — never guess, and never delete
+      const diff = diffData(mine, row.data);
+      if (!diff.length) { await pushLocal(mine); return; }  // diverged, but nothing actually differs
+      setConflict({ mine, theirs: row.data, at: row.updated_at, diff });
+      setStatus("error");
+    } catch (e) {
+      setStatus("error"); // offline: keep the local edits and the dirty flag
+    }
+  };
+
   useEffect(() => {
     if (!supabase || !session) return;
-    let unsubRealtime;
-    setStatus("connecting");
-    (async () => {
-      try {
-        const row = await fetchCloudData(session.user.id);
-        if (row) {
-          skipNextPush.current = true;
-          setData(hydrate(row.data));
-        } else {
-          await pushCloudData(session.user.id, data);
-        }
-        setStatus("synced");
-        unsubRealtime = subscribeToCloudData(session.user.id, (remoteData) => {
-          skipNextPush.current = true;
-          setData(hydrate(remoteData));
-        });
-      } catch (e) {
-        setStatus("error");
-      }
-    })();
-    return () => unsubRealtime && unsubRealtime();
+    let unsub;
+    reconcile().then(() => {
+      unsub = subscribeToCloudData(session.user.id, (remoteData) => {
+        /* Never drop unpushed local edits on the floor. Our push is moments away
+           and is the later write, which is the rule the user asked for. */
+        if (loadSync().dirty) return;
+        applyRemote(remoteData, new Date().toISOString());
+      });
+    });
+    return () => unsub && unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
+
+  // a failed push leaves edits stranded until something retries — so retry the
+  // moment the machine says it has a network again, and when the window returns
+  useEffect(() => {
+    if (!supabase || !session) return;
+    const retry = () => { if (loadSync().dirty) reconcile(); };
+    window.addEventListener("online", retry);
+    window.addEventListener("focus", retry);
+    return () => { window.removeEventListener("online", retry); window.removeEventListener("focus", retry); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, conflict]);
 
   // push local edits up, debounced — skipped once right after applying a remote update
   useEffect(() => {
     if (!supabase || !session) return;
     if (skipNextPush.current) { skipNextPush.current = false; return; }
+    // recorded before the debounce, so quitting while offline still remembers
+    // that this device is holding unsynced work
+    saveSync({ ...loadSync(), dirty: true });
+    if (conflict) return; // don't race the user's answer
     clearTimeout(pushTimer.current);
     pushTimer.current = setTimeout(async () => {
-      try { await pushCloudData(session.user.id, data); setStatus("synced"); }
+      try { await pushLocal(data); }
       catch (e) { setStatus("error"); }
     }, 600);
     return () => clearTimeout(pushTimer.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [data, conflict]);
+
+  const resolveConflict = async (keep) => {
+    const c = conflict;
+    setConflict(null);
+    if (keep === "cloud") { applyRemote(c.theirs, c.at); setStatus("synced"); return; }
+    try { await pushLocal(c.mine); } catch (e) { setStatus("error"); }
+  };
 
   if (!supabase) return null; // no Supabase env vars — cloud sync UI stays hidden
 
@@ -1685,11 +1835,19 @@ function SyncBar({ data, setData }) {
     );
   }
 
-  const statusLabel = { connecting: "Syncing…", synced: "Synced", error: "Sync error" }[status] || "Offline";
+  const statusLabel = conflict ? "Needs a decision"
+    : { connecting: "Syncing…", synced: "Synced", error: "Not synced" }[status] || "Offline";
   return (
     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-      <span className="wkchip" style={{ color: status === "error" ? "var(--tomato)" : "var(--muted)" }}>{statusLabel}</span>
-      <button className="btn ghost" onClick={signOut}>Sign out</button>
+      <span className="wkchip" style={{ color: status === "error" ? "var(--tomato)" : "var(--muted)" }}
+        title={status === "error" ? "Your changes are saved on this device and will go up when the connection returns." : ""}>
+        {statusLabel}
+      </span>
+      <button className="btn ghost" onClick={() => { saveSync({ base: null, dirty: false }); signOut(); }}>Sign out</button>
+      {conflict && (
+        <ConflictDialog diff={conflict.diff}
+          onKeepMine={() => resolveConflict("mine")} onKeepCloud={() => resolveConflict("cloud")} />
+      )}
     </div>
   );
 }

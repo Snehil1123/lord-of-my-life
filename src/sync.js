@@ -40,11 +40,17 @@ export async function fetchCloudData(userId) {
    out of the table schema. */
 export const clientId = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
+/* Returns the updated_at it wrote. The caller records that as the version of the
+   cloud row it now agrees with, which is what lets a later reconnect tell "the
+   cloud hasn't moved, my local edits are the only new ones" apart from "both
+   sides changed" without comparing two machines' clocks. */
 export async function pushCloudData(userId, data) {
+  const updatedAt = new Date().toISOString();
   const { error } = await supabase
     .from("planner_data")
-    .upsert({ user_id: userId, data: { ...data, _client: clientId }, updated_at: new Date().toISOString() });
+    .upsert({ user_id: userId, data: { ...data, _client: clientId }, updated_at: updatedAt });
   if (error) throw error;
+  return updatedAt;
 }
 
 /* ---------------- shared focus rooms ----------------

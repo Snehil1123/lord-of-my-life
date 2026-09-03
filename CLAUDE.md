@@ -769,12 +769,32 @@ realtime subscription).
   `.env.local` (gitignored; see `.env.example`). If unset, `supabase` in
   `sync.js` is `null` and `SyncBar` renders nothing — the app is fully
   functional localStorage-only with no signed-in state.
-- Sync model is intentionally simple: **last write wins**. On sign-in, cloud
-  data replaces local if a cloud row exists, otherwise local data seeds the
-  cloud row. After that, local edits debounce-push (600ms) to Supabase, and a
-  realtime subscription applies remote changes as they arrive. There's no
-  merge/conflict resolution — fine for one person using one device at a time,
-  not fine if you need concurrent editing.
+- **Nothing overwrites local data unless the cloud is known to be strictly
+  ahead.** `syncPlan({ row, base, dirty })` is the whole decision, extracted as a
+  pure function because it is the piece that destroys people's work when it is
+  wrong:
+  - no row, or the row still reads `base` → **push**. The second is the offline
+    case: only this device moved, so its edits are simply the newer ones.
+  - not `dirty` → **pull**. We hold nothing unsynced, so the cloud wins.
+  - `dirty` and the row has moved → **ask**. `ConflictDialog` lists what exists
+    on each side and nothing is written until the user picks.
+- **`base`/`dirty` live in `localStorage` under `lordofmylife:sync`**, per-device.
+  `base` is the `updated_at` this device last agreed with; `dirty` means edits the
+  server hasn't acknowledged, and is written *before* the 600ms debounce so
+  quitting while offline still records that work is outstanding.
+  **No timestamps are compared between machines** — a device with a slow clock
+  would otherwise lose every edit it made.
+- **This replaced an unconditional pull, which deleted a day of offline work.**
+  Edits made with no connection sat in localStorage; the next launch fetched the
+  untouched cloud row straight over them, and the push that followed wrote the
+  loss up permanently. If you are tempted to simplify the reconnect path back to
+  "fetch, then setData", that is the bug.
+- A failed push leaves edits stranded, so `reconcile()` also runs on the
+  `online` event and on window focus whenever `dirty`.
+- The realtime subscription **does not apply a remote row while `dirty`** — our
+  push is moments away and is the later write.
+- Beyond that the model is still last-write-wins per field: two devices editing
+  the same task concurrently is resolved by whoever writes second, not merged.
 - `skipNextPush` in `SyncBar` exists to stop a remote-applied update from
   immediately bouncing back to the server as if it were a local edit. Keep
   that guard if you touch the push/pull effects.
