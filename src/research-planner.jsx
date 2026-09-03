@@ -361,7 +361,7 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .gbar:hover{filter:brightness(1.08);}
 .gbar.done{opacity:.45; text-decoration:line-through;}
 .gbar.due-today{box-shadow:0 0 0 2px var(--amber), 0 0 12px 1px var(--amber);}
-.gbar.overdue{animation:overdueglow 1.3s ease-in-out infinite;}
+.gbar.overdue{box-shadow:inset 0 0 0 1px var(--tomato), 0 0 12px 0 var(--tomato);}
 .todayline{position:absolute; top:0; bottom:0; width:2px; background:var(--tomato); z-index:3;}
 .todayflag{
   position:absolute; top:-2px; transform:translateX(-50%); background:var(--tomato); color:#fff;
@@ -398,11 +398,25 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .taskrow:last-child{border-bottom:none;}
 .taskrow.done .tasktitle{color:var(--muted); text-decoration:line-through; text-decoration-color:var(--pine);}
 .taskrow.due-today{border-radius:6px; box-shadow:inset 0 0 0 1px var(--amber), 0 0 10px -2px var(--amber);}
-.taskrow.overdue{border-radius:6px; animation:overdueglow 1.3s ease-in-out infinite;}
-@keyframes overdueglow{
-  0%,100%{box-shadow:inset 0 0 0 1px var(--tomato), 0 0 6px -2px var(--tomato);}
-  50%{box-shadow:inset 0 0 0 1px var(--tomato), 0 0 16px 2px var(--tomato);}
+/* The pulse is an opacity animation on a glow layer, not an animated box-shadow.
+   A shadow can't be composited: every frame repaints the element on the CPU and
+   re-uploads it, 60 times a second, for as long as anything is overdue. Opacity
+   is handled by the compositor and costs essentially nothing. Same look. */
+.taskrow.overdue{border-radius:6px; box-shadow:inset 0 0 0 1px var(--tomato);}
+.taskrow.overdue::after, .subtaskrow.overdue::after{
+  content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none;
+  box-shadow:0 0 16px 2px var(--tomato);
+  animation:overduepulse 1.3s ease-in-out infinite;
 }
+@keyframes overduepulse{ 0%,100%{opacity:.28;} 50%{opacity:1;} }
+
+/* Nothing decorative animates while the window is hidden or in the background.
+   Chromium throttles background *tabs*, but a desktop window that is merely
+   unfocused keeps compositing every frame, so ambience the user isn't looking at
+   goes on costing GPU indefinitely. Everything here is decorative or transient;
+   the timer is driven by an absolute end time, so pausing paint changes nothing
+   about what it reports. */
+.fw.idle *, .fw.idle *::before, .fw.idle *::after{ animation-play-state:paused !important; }
 .checkwrap{position:relative; flex:none; width:22px; height:22px;}
 .check{
   width:22px; height:22px; border-radius:50%; border:2px solid var(--line);
@@ -458,7 +472,7 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .subtaskrow{display:flex; align-items:center; gap:10px; padding:6px 10px; margin:3px 0;}
 .subtaskrow.done .subtasktitle{color:var(--muted); text-decoration:line-through; text-decoration-color:var(--pine);}
 .subtaskrow.due-today{border-radius:6px; box-shadow:inset 0 0 0 1px var(--amber), 0 0 8px -3px var(--amber);}
-.subtaskrow.overdue{border-radius:6px; animation:overdueglow 1.3s ease-in-out infinite;}
+.subtaskrow.overdue{border-radius:6px; position:relative; box-shadow:inset 0 0 0 1px var(--tomato);}
 .subtaskrow.editing{gap:8px; flex-wrap:wrap;}
 .subtasktitle{font-size:13.5px; flex:1; min-width:0;}
 /* one shared baseline for "due …" and "N min" so they line up down the column */
@@ -1118,6 +1132,20 @@ export default function LordOfMyLife() {
     return () => clearInterval(interval);
   }, []);
 
+  // see the .fw.idle rule: decoration stops when the window isn't being looked at
+  const [idle, setIdle] = useState(false);
+  useEffect(() => {
+    const update = () => setIdle(document.hidden || !document.hasFocus());
+    update();
+    const events = ["visibilitychange", "focus", "blur"];
+    events.forEach((e) => window.addEventListener(e, update, true));
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      events.forEach((e) => window.removeEventListener(e, update, true));
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, []);
+
   useEffect(() => {
     try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* storage full or unavailable */ }
   }, [theme]);
@@ -1187,7 +1215,7 @@ export default function LordOfMyLife() {
   const todayPomos = data.pomoLog[dateKey(new Date())] || 0;
 
   return (
-    <div className={`fw ${aiOpen ? "aiopen" : ""} ${calOpen && view !== "calendar" ? "calopen" : ""}`}
+    <div className={`fw ${idle ? "idle" : ""} ${aiOpen ? "aiopen" : ""} ${calOpen && view !== "calendar" ? "calopen" : ""}`}
       data-theme={theme} style={{ "--aiw": `${aiWidth}px`, "--calw": `${calWidth}px` }}>
       <style>{CSS}</style>
       {theme === "fantasy" && <FantasyScene />}
@@ -3119,7 +3147,10 @@ function usePomodoro(data, setData, dataRef, theme) {
     endRef.current = Date.now() + left * 1000;
     tickRef.current = setInterval(() => {
       const remain = Math.max(0, Math.round((endRef.current - Date.now()) / 1000));
-      setLeft(remain);
+      /* Polled four times a second so the end is caught promptly, but the state
+         only moves when the displayed second does. The digits are mm:ss, so the
+         other three polls were re-rendering the entire app for nothing. */
+      setLeft((prev) => (prev === remain ? prev : remain));
       if (remain === 0) { clearInterval(tickRef.current); onComplete(); }
     }, 250);
     return () => clearInterval(tickRef.current);

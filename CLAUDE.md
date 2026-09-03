@@ -998,6 +998,41 @@ the rebuild, [src/update.js](src/update.js) is the renderer seam, `UpdatePill` i
   reopens the version you had. `--dir` builds to a temp directory and renames,
   so a failed build leaves the previous one intact.
 
+## Performance
+
+The app is meant to be idle-cheap. A user reported it holding ~20% GPU; the cause
+was continuous compositing, and the rules below are what keep it down.
+
+- **Never animate `box-shadow`, `text-shadow`, or `filter` in a looping
+  animation.** None of them can be composited, so every frame repaints the
+  element on the CPU and re-uploads it to the GPU, 60 times a second, forever.
+  Put the glow on a pseudo-element with a *static* shadow and animate `opacity`
+  instead — that runs on the compositor and is close to free. `overduepulse` is
+  the worked example; it replaced `overdueglow`, which repainted once per overdue
+  task per frame and was **not** theme-scoped, so it ran in `dark` too.
+  - `.gbar` is `overflow:hidden`, which clips a pseudo-element's outer glow, so
+    the overdue Gantt bar keeps a static shadow rather than pulsing.
+  - `emberglow`, `wardpulse` and `runeglow` still animate shadows. Each is a
+    single fantasy-only element, so they're left alone — but don't add more.
+- **`.fw.idle` pauses every animation** (`animation-play-state: paused`) whenever
+  the window is hidden **or** unfocused. Chromium throttles background *tabs*,
+  but a desktop window that is merely unfocused keeps compositing every frame, so
+  ambience nobody is looking at costs GPU indefinitely. Measured: fantasy with
+  eight overdue tasks runs 39 continuous animations, all of which stop. Safe
+  because everything animated here is decorative or transient, and the timer is
+  driven by an absolute end time rather than by frames.
+- **The pomodoro polls at 250ms but only calls `setLeft` when the displayed
+  second changes.** The digits are mm:ss, so three of every four polls were
+  re-rendering the whole app to produce identical output.
+- `prefers-reduced-motion` already disables every animation outright; don't
+  bypass it.
+- **GPU preference is left to Chromium.** `electron/main.cjs` reads `LOML_GPU`
+  (`high` forces the discrete card, `low` pins the integrated one) but sets
+  nothing by default. Forcing the discrete GPU lowers the percentage a task
+  manager reports while raising the watts behind it, because the work moves to a
+  larger chip that would otherwise stay asleep. For a planner the integrated GPU
+  is the right one; the fix for high usage is to do less work.
+
 ## Conventions
 
 - No comments explaining *what* code does — the file already favors compact,

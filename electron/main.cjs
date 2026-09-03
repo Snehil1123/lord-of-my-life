@@ -7,6 +7,22 @@ const updater = require("./updater.cjs");
 
 const isDev = !app.isPackaged;
 
+/* Which GPU to run on, when the machine has more than one.
+
+   Left to Chromium by default, and that is deliberate: on a laptop the
+   integrated GPU is the low-power one, and a planner has no business waking a
+   discrete card. Forcing the discrete GPU lowers the percentage the task manager
+   reports while raising the watts behind it, because the same work is now being
+   done by a much larger chip that would otherwise be asleep. If the app is busy
+   enough to matter, the fix is to do less work, not to spread it over a bigger
+   GPU.
+
+   Set LOML_GPU=high to force the discrete one anyway, or =low to pin the
+   integrated one. */
+const gpu = (process.env.LOML_GPU || "").toLowerCase();
+if (gpu === "high") app.commandLine.appendSwitch("force_high_performance_gpu");
+if (gpu === "low") app.commandLine.appendSwitch("force_low_power_gpu");
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1180,
