@@ -75,12 +75,13 @@ process — see "AI assistant".)
 
 ```
 data = {
-  settings: { work, short, long },       // pomodoro minutes
+  settings: { work, short, long, breaks },// pomodoro minutes; breaks:false runs them back to back
   pomoLog:  { "YYYY-MM-DD": count },      // completed work sessions per day
   sessionQueue: [taskId],                // tasks lined up in the Session tab
   guests: [{ id, name, tasks: [{ id, title, minutes, est, done, checked }] }],
   categories: [{ id, name, color, group: "work" | "personal" }],
   events: [{ id, title, date: "YYYY-MM-DD", start: "HH:MM", end: "HH:MM", cat? }],
+  ignoredEvents: [eventId],                // events told not to block the plan
   seededRecurring: true,                 // one-time flag, see "Recurring tasks" below
   lastRollover: "YYYY-MM-DD",            // last daily sweep, see "Daily rollover" below
   archive: [task],                       // completed tasks, subtasks still attached
@@ -270,6 +271,15 @@ are deliberately not built yet.
   wherever the plan had to wait. The week grid draws it, the left panel's agenda
   reads it, the Session list derives its event dividers from it, and "Finish at"
   is just the end of the last block. Don't recompute any of that separately.
+- **A block is as long as the work actually left, capped at one focus length** —
+  not always a whole session. A ten-minute task occupies ten minutes on the
+  timeline, which keeps the drawn plan and the finish time telling one story.
+- **An event can be dismissed from the session** (the ✕ on its row), which adds
+  its id to `data.ignoredEvents` and stops it pushing the plan around — plenty of
+  calendar entries aren't really time you can't work in. A list of ids rather
+  than a flag on the event, because pulled Google events live in component state
+  and have nothing to hang a flag on. Dismissing deletes nothing, and the session
+  footer offers a restore while anything is ignored.
 - `PLAN_CAP` bounds the output; a queue long enough to run for days would
   otherwise lay out forever.
 - **The Session list distinguishes two cases, and conflating them reads as a
@@ -300,6 +310,21 @@ looking for the old `.timerring` SVG, it was replaced by `.pomoprog`.
   that has to outlive a tab switch belongs up there too.
 - `onComplete` reads the queue from `dataRef` at the moment it fires, so a
   session credits whatever task is active when it *ends*, not when it started.
+- **The end-of-timer sound is theme-conditional**, the same pattern as
+  `sessionEmoji` and `assistantLabel`: `chime()` is dark's two-note ding,
+  `shimmer()` is fantasy's — a fifth-and-octave stack entering in sequence with
+  long decays, so it rings rather than beeps. `endSound(theme)` picks between
+  them. `usePomodoro` reads the theme and the breaks setting through **refs**,
+  because `onComplete` lives inside an interval created when `running` flipped,
+  and anything closed over there is as old as the session.
+- **`tone()` resumes the AudioContext if it's suspended.** One constructed before
+  the first user gesture starts suspended and stays that way silently, losing
+  every later sound.
+- **Breaks are optional** (`settings.breaks`), read through `breaksOn(settings)`
+  / `takesBreaks(data)` as "not explicitly false", so data predating the setting
+  keeps taking them with no migration. With breaks off the timer re-arms straight
+  to another focus session, `planSession` lays no break blocks, and
+  `sessionStats` adds no break minutes. The short/long inputs hide.
 - **Timer completion posts a desktop notification** (`notify`). Electron grants
   the permission without prompting; a browser asks, and `askNotifyPermission()`
   is called from Start rather than on load so the prompt is tied to an action.
@@ -352,12 +377,18 @@ looking for the old `.timerring` SVG, it was replaced by `.pomoprog`.
   remaining sessions one at a time to add the break after each — including the
   long one every 4th — which is most of the difference over a full day. It's
   driven by the `now` prop, so it re-estimates as time passes.
-  - **`remaining` rounds up per item, matching how `planSession` lays blocks
-    down** — a pomodoro is never split between two pieces of work. Ceiling the
-    summed minutes instead made the footer disagree with the calendar as soon as
-    two items were measured in real minutes (30 + 20 minutes is three blocks on
-    the timeline but `ceil(50/25) = 2` here). For an ordinary task the two are
-    identical, which is why it went unnoticed until subtasks could be queued.
+  - **`remaining` counts blocks; the finish time counts minutes.** They answer
+    different questions and must not be conflated. "Sessions 2/5" is a count of
+    sittings, so it rounds up per item exactly as `planSession` lays blocks down
+    — a pomodoro is never split between two pieces of work. The finish time is
+    real minutes instead: a ten-minute task should move the estimate by ten
+    minutes, not by a whole focus length.
+  - **`minutesLeft` returns real minutes, not sessions times focus length.** For
+    a task without subtasks it prorates the task's own `minutes` by how much of
+    `est` is left, so a 50-minute task half done reports 25. Reading it as
+    `est * work` put every short task out by the difference between its length
+    and a full session. Tasks predating the `minutes` field fall back to the old
+    session-based reading.
   - **`doneEst` is counted, not derived as `totalEst - remaining`**, so it stays
     right whatever rounding the items involve.
 - **A shared room puts two people's sessions side by side over the network**

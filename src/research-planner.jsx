@@ -846,6 +846,9 @@ function tone(freqA, freqB, dur = 0.28, vol = 0.12) {
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     const ctx = (window.__fwAudio = window.__fwAudio || new Ctx());
+    // a context created before the first gesture starts suspended, and stays
+    // that way silently — every later sound is lost unless it's woken up
+    if (ctx.state === "suspended") ctx.resume().catch(() => {});
     const o = ctx.createOscillator(), g = ctx.createGain();
     o.type = "sine";
     o.frequency.setValueAtTime(freqA, ctx.currentTime);
@@ -857,7 +860,22 @@ function tone(freqA, freqB, dur = 0.28, vol = 0.12) {
   } catch (e) {}
 }
 const popSound = () => tone(620, 940, 0.25);
+// dark: a plain two-note ding, the sound a kitchen timer makes
 const chime = () => { tone(520, 520, 0.4, 0.1); setTimeout(() => tone(780, 780, 0.55, 0.1), 180); };
+/* fantasy: the same event, rung rather than beeped — a fifth-and-octave stack
+   entering in sequence, each partial quieter and longer than the last, so it
+   blooms and decays instead of stopping. Same theme-conditional pattern as
+   sessionEmoji and assistantLabel. */
+const shimmer = () => {
+  [[392, 0, 1.1], [588, 200, 1.3], [784, 430, 1.6], [1176, 700, 1.9]]
+    .forEach(([freq, delay, dur]) => setTimeout(() => tone(freq, freq, dur, 0.05), delay));
+};
+const endSound = (theme) => (theme === "fantasy" ? shimmer : chime)();
+
+/* Breaks are opt-out, read as "not explicitly false" so saved data that predates
+   the setting keeps taking them and needs no migration. */
+const breaksOn = (settings) => settings.breaks !== false;
+const takesBreaks = (data) => breaksOn(data.settings);
 
 /* ---------------- default data ---------------- */
 /* Categories live in `data.categories` so the user can add their own. These are only
@@ -1133,7 +1151,7 @@ export default function LordOfMyLife() {
   }, [calWidth]);
 
   // held here, not in SessionView, so the countdown survives switching tabs
-  const timer = usePomodoro(data, setData, dataRef);
+  const timer = usePomodoro(data, setData, dataRef, theme);
   const authEmail = useAuthEmail();
   const roomQueue = useMemo(
     () => queueItems(data.sessionQueue, data.tasks, data.settings.work).map((q) => q.item),
@@ -1154,8 +1172,14 @@ export default function LordOfMyLife() {
   // One plan drives the calendar blocks, the left panel's agenda and the event
   // dividers in the Session list, so the three can never disagree.
   const plan = useMemo(
-    () => planSession(roomQueue, allEvents.filter((e) => !e.allDay), data.settings, timer.cycle, now),
-    [roomQueue, allEvents, data.settings, timer.cycle, now],
+    () => planSession(
+      roomQueue,
+      // all-day events don't block time, and a dismissed one is being treated
+      // as not really booked — neither should push the plan around
+      allEvents.filter((e) => !e.allDay && !(data.ignoredEvents || []).includes(e.id)),
+      data.settings, timer.cycle, now, takesBreaks(data),
+    ),
+    [roomQueue, allEvents, data.settings, data.ignoredEvents, timer.cycle, now],
   );
 
   const sessionEmoji = theme === "fantasy" ? "🕯️" : "🍅";
@@ -2891,11 +2915,19 @@ const MODE_LABEL = { work: "Pomodoro", short: "Short Break", long: "Long Break" 
    reports the sum of its *unchecked* subtasks — without this, ticking off a
    subtask changed nothing in the session totals, because `done` only counts
    finished pomodoros and a subtask isn't one. */
+/* Real minutes of work left, which is not the same as sessions left times the
+   session length: a ten-minute task is one session but ten minutes, and saying
+   twenty-five put the finish time out by a quarter of an hour per short task.
+   Progress is prorated across the task's own length, so a 50-minute task with
+   one of two sessions done reports 25 minutes. `minutes` is absent on tasks
+   predating the field, which fall back to the old session-based reading. */
 function minutesLeft(t, workMin) {
   if (t.checked) return 0;
   const subs = t.subtasks || [];
   if (subs.length) return subs.filter((x) => !x.checked).reduce((n, x) => n + x.minutes, 0);
-  return Math.max(0, t.est - t.done) * workMin;
+  const total = t.minutes || t.est * workMin;
+  if (!t.est) return Math.max(0, total);
+  return Math.max(0, Math.round((total * (t.est - t.done)) / t.est));
 }
 
 /* A queue entry is either a task id or "taskId::subId". Keeping the queue a flat
@@ -2940,7 +2972,7 @@ const queueItems = (queueIds, tasks, workMin) =>
    An "event" block appears where the plan had to wait for it, which is what
    makes the Session list able to say "this task is after the lab meeting". */
 const PLAN_CAP = 60; // stop laying out rather than spin on pathological input
-function planSession(tasks, events, s, cycle, from) {
+function planSession(tasks, events, s, cycle, from, breaks = true) {
   const busy = events
     .map((e) => ({ id: e.id, title: e.title, start: atTime(e.date, e.start), end: atTime(e.date, e.end) }))
     .filter((b) => b.end > from && b.end > b.start)
@@ -2952,12 +2984,16 @@ function planSession(tasks, events, s, cycle, from) {
   let cyc = cycle;
 
   for (const t of tasks) {
-    const mins = minutesLeft(t, s.work);
-    if (mins <= 0) continue;
-    const count = Math.ceil(mins / s.work);
+    let left = minutesLeft(t, s.work);
+    if (left <= 0) continue;
+    const count = Math.ceil(left / s.work);
     for (let i = 0; i < count; i++) {
       if (blocks.length > PLAN_CAP) return blocks;
-      const dur = s.work * 60000;
+      /* The block is as long as the work actually left, capped at one focus
+         length — not always a whole session. A ten-minute task takes ten
+         minutes on the timeline, which is what makes the finish time honest. */
+      const span = Math.min(left, s.work);
+      const dur = span * 60000;
       // walk past every event this session would collide with
       for (let guard = 0; guard < busy.length + 1; guard++) {
         const hit = busy.find((b) => b.start < new Date(cursor.getTime() + dur) && b.end > cursor);
@@ -2968,7 +3004,9 @@ function planSession(tasks, events, s, cycle, from) {
       const start = new Date(cursor);
       cursor = new Date(cursor.getTime() + dur);
       blocks.push({ type: "task", taskId: t.id, title: t.title, start, end: new Date(cursor), n: i + 1, of: count });
+      left -= span;
       cyc += 1;
+      if (!breaks) continue;
       const brk = (cyc % 4 === 0 ? s.long : s.short) * 60000;
       blocks.push({ type: "break", long: cyc % 4 === 0, start: new Date(cursor), end: new Date(cursor.getTime() + brk) });
       cursor = new Date(cursor.getTime() + brk);
@@ -2982,24 +3020,23 @@ function planSession(tasks, events, s, cycle, from) {
    Remaining sessions are walked one at a time so the break after each is
    counted, including the long one every 4th — that's most of the difference
    over a full day. */
-function sessionStats(tasks, s, cycle, now) {
+function sessionStats(tasks, s, cycle, now, breaks = true) {
   const totalEst = tasks.reduce((n, t) => n + t.est, 0);
-  /* Rounded up per item, exactly as planSession lays blocks down — a pomodoro is
-     never shared between two pieces of work. Ceiling the sum instead quietly
-     disagreed with the plan whenever two items were measured in real minutes
-     rather than whole sessions (two 30 and 20 minute subtasks are three blocks
-     on the calendar but ceil(50/25) = 2 here), so the footer and the timeline
-     told different stories. For an ordinary task the two are identical, which is
-     why it went unnoticed. */
+  /* Two different questions, and they want different answers. `remaining` counts
+     blocks, because "Sessions 2/5" is a count of sittings and a pomodoro is
+     never shared between two pieces of work — it rounds up per item, matching
+     how planSession lays blocks down. The finish time is measured in real
+     minutes instead: a ten-minute task should push the estimate by ten minutes,
+     not by a whole focus length. */
   const remaining = tasks.reduce((n, t) => n + Math.ceil(minutesLeft(t, s.work) / s.work), 0);
   // counted rather than derived from totalEst - remaining, so it stays right
   // whatever rounding the items involve
   const doneEst = Math.min(totalEst, tasks.reduce((n, t) => n + (t.checked ? t.est : t.done), 0));
-  let mins = 0;
-  for (let i = 0; i < remaining; i++) {
-    mins += s.work;
-    if (i < remaining - 1) mins += (cycle + i + 1) % 4 === 0 ? s.long : s.short;
+  let mins = tasks.reduce((n, t) => n + minutesLeft(t, s.work), 0);
+  if (breaks) {
+    for (let i = 0; i < remaining - 1; i++) mins += (cycle + i + 1) % 4 === 0 ? s.long : s.short;
   }
+  mins = Math.round(mins);
   const fmtSpan = mins >= 60 ? `${Math.floor(mins / 60)}h${mins % 60 ? ` ${mins % 60}m` : ""}` : `${mins}m`;
   return { totalEst, doneEst, remaining, finishAt: new Date(now.getTime() + mins * 60000), fmtSpan };
 }
@@ -3024,9 +3061,16 @@ function askNotifyPermission() {
 /* The pomodoro clock lives above the view switcher, in LordOfMyLife, so it keeps
    running when you leave the Session tab. Held inside SessionView it died on
    unmount — both the state and the interval went with the component. */
-function usePomodoro(data, setData, dataRef) {
+function usePomodoro(data, setData, dataRef, theme) {
   const s = data.settings;
   const durFor = (m) => (m === "work" ? s.work : m === "short" ? s.short : s.long) * 60;
+  /* Read through refs at completion time, not captured: onComplete lives inside
+     an interval created when `running` flipped, so anything closed over there is
+     as old as the session. */
+  const themeRef = useRef(theme);
+  useEffect(() => { themeRef.current = theme; }, [theme]);
+  const breaksRef = useRef(takesBreaks(data));
+  useEffect(() => { breaksRef.current = takesBreaks(data); }, [data]);
   const [mode, setMode] = useState("work"); // work | short | long
   const [left, setLeft] = useState(() => data.settings.work * 60);
   const [running, setRunning] = useState(false);
@@ -3040,7 +3084,8 @@ function usePomodoro(data, setData, dataRef) {
 
   const onComplete = () => {
     setRunning(false);
-    chime();
+    endSound(themeRef.current);
+    const breaks = breaksRef.current;
     if (mode === "work") {
       // read the queue at completion time, so a session credits whatever is
       // active when it ends rather than when it started
@@ -3058,11 +3103,11 @@ function usePomodoro(data, setData, dataRef) {
       }));
       const nextCycle = cycle + 1;
       setCycle(nextCycle);
-      const nm = nextCycle % 4 === 0 ? "long" : "short";
+      // with breaks off the timer simply re-arms for the next focus session
+      const nm = !breaks ? "work" : nextCycle % 4 === 0 ? "long" : "short";
       setMode(nm); setLeft(durFor(nm));
-      notify("Focus session complete", active
-        ? `${active.title} — time for a ${nm === "long" ? "long" : "short"} break.`
-        : `Time for a ${nm === "long" ? "long" : "short"} break.`);
+      const what = nm === "work" ? "another focus session is ready" : `time for a ${nm} break`;
+      notify("Focus session complete", active ? `${active.title} — ${what}.` : `${what[0].toUpperCase()}${what.slice(1)}.`);
     } else {
       setMode("work"); setLeft(durFor("work"));
       notify("Break over", "Back to it — a new focus session is ready.");
@@ -3189,7 +3234,7 @@ function useSessionRoom({ defaultName, myTasks, timer }) {
 function PeerColumn({ peer, s, now }) {
   const tasks = peer.tasks || [];
   const active = tasks.find((t) => !t.checked) || null;
-  const st = sessionStats(tasks, s, peer.timer?.cycle || 0, now);
+  const st = sessionStats(tasks, s, peer.timer?.cycle || 0, now, breaksOn(s));
   return (
     <div className="qcol">
       <div className="qhead">
@@ -3239,7 +3284,7 @@ function GuestColumn({ guest, s, cycle, now, onAddTask, onToggleTask, onDelTask,
     setForm({ title: "", minutes: 25 });
     setAdding(false);
   };
-  const st = sessionStats(guest.tasks, s, cycle, now);
+  const st = sessionStats(guest.tasks, s, cycle, now, breaksOn(s));
 
   return (
     <div className="qcol">
@@ -3476,6 +3521,7 @@ function QueuePicker({ data, queueIds, onAdd, onClose }) {
 
 function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = [] }) {
   const s = data.settings;
+  const breaks = breaksOn(s);
   const [roomInput, setRoomInput] = useState("");
   const { durFor, switchMode, reset, start, setLeft } = timer;
 
@@ -3511,6 +3557,15 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
   const activeEntry = entries.find((q) => !q.item.checked) || null;
   const active = activeEntry?.item || null;
   const activeNo = activeEntry ? entries.indexOf(activeEntry) + 1 : 0;
+
+  /* Dismissing an event doesn't delete it — it only stops it blocking the plan,
+     because plenty of things on a calendar aren't really time you can't work in.
+     Held as a list of ids so it works for pulled Google events too, which live
+     in component state and have nothing to hang a flag on. */
+  const ignored = data.ignoredEvents || [];
+  const ignoreEvent = (id) =>
+    setData((prev) => ({ ...prev, ignoredEvents: [...(prev.ignoredEvents || []), id] }));
+  const unignoreAll = () => setData((prev) => ({ ...prev, ignoredEvents: [] }));
 
   const setQueue = (ids) => setData((prev) => ({ ...prev, sessionQueue: ids }));
   // closing is the picker's call, not this one's — it stays open across subtask picks
@@ -3591,7 +3646,7 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
   const mm = String(Math.floor(left / 60)).padStart(2, "0");
   const ss = String(left % 60).padStart(2, "0");
 
-  const stats = sessionStats(queue, s, cycle, now);
+  const stats = sessionStats(queue, s, cycle, now, breaks);
   const { totalEst, doneEst, remaining } = stats;
   // when the plan had to route around meetings, its end is the honest answer
   const planned = plan.length ? plan[plan.length - 1].end : null;
@@ -3675,6 +3730,8 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
             <span className="qeventtime">{fmtClock(ev.start)}–{fmtClock(ev.end)}</span>
             <span className="qeventtitle">{ev.title}</span>
             <span className="qeventnote">everything below is after this</span>
+            <button className="xbtn" title="Not really blocking — plan straight through it"
+              onClick={() => ignoreEvent(ev.id)}>✕</button>
           </div>
         ))}
         <QueueRow entry={q} data={data} setData={setData} now={now}
@@ -3686,6 +3743,8 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
             <span className="qeventtime">{fmtClock(ev.start)}–{fmtClock(ev.end)}</span>
             <span className="qeventtitle">{ev.title}</span>
             <span className="qeventnote">the task above only finishes after this</span>
+            <button className="xbtn" title="Not really blocking — plan straight through it"
+              onClick={() => ignoreEvent(ev.id)}>✕</button>
           </div>
         ))}
         </React.Fragment>
@@ -3738,6 +3797,12 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
           <span>Sessions <b>{doneEst}/{totalEst}</b></span>
           {remaining > 0 && <span>Finish at <b>{finishAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</b> ({fmtSpan})</span>}
           {remaining === 0 && <span><b>All done</b> — nothing left in this session.</span>}
+          {ignored.length > 0 && (
+            <button className="btn ghost" style={{ marginLeft: "auto" }} onClick={unignoreAll}
+              title="Let these block the plan again">
+              {ignored.length} event{ignored.length === 1 ? "" : "s"} ignored — restore
+            </button>
+          )}
         </div>
       )}
       </div>
@@ -3782,8 +3847,13 @@ function SessionView({ data, setData, sessionEmoji, now, timer, session, plan = 
 
       <div className="durs">
         <label>focus <input type="number" className="field" value={s.work} onChange={(e) => setDur("work", e.target.value)} /> min</label>
-        <label>short <input type="number" className="field" value={s.short} onChange={(e) => setDur("short", e.target.value)} /> min</label>
-        <label>long <input type="number" className="field" value={s.long} onChange={(e) => setDur("long", e.target.value)} /> min</label>
+        {breaks && <label>short <input type="number" className="field" value={s.short} onChange={(e) => setDur("short", e.target.value)} /> min</label>}
+        {breaks && <label>long <input type="number" className="field" value={s.long} onChange={(e) => setDur("long", e.target.value)} /> min</label>}
+        <label title="Run focus sessions back to back, with no break between them">
+          <input type="checkbox" checked={breaks}
+            onChange={(e) => setData((prev) => ({ ...prev, settings: { ...prev.settings, breaks: e.target.checked } }))} />
+          {" "}breaks
+        </label>
       </div>
     </div>
   );
