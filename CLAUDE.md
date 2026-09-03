@@ -254,6 +254,18 @@ are deliberately not built yet.
     but it is **required**: without it the token exchange fails with
     "client_secret is missing". `explain()` catches exactly that case, and only
     when no secret was sent, so a genuinely wrong secret still reports as itself.
+- **A short event lays out as a row, not a stack.** An hour is one 44px slot, so
+  a 15-minute booking is 11px and a single title line is already 14px before
+  padding — stacked, both lines were clipped to an unreadable smear. Under 45
+  minutes (the height two lines need) the title and the length sit side by side
+  on one line instead.
+  - Such a block shows **its duration, not its span**: "09:00-09:10" takes two
+    thirds of a day column and leaves four characters for the name, while the
+    start time is already what the block's position says. Measured, this took the
+    title from 23px to 69px. The full range stays in the hover tooltip.
+  - `.caleventtitle` and `.caleventtime` are both `flex:none` and `nowrap`.
+    Without that a long meta line wrapped inside the flex column and squeezed the
+    title to four pixels — an event rendered with no visible name at all.
 - **An event's `cat` is optional and comes from `data.categories`** — the add
   row's picker is built from `catsIn(data, group)`, so user-made sections like
   Quals or LomL Dev appear without any further wiring. The category is what

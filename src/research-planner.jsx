@@ -693,8 +693,24 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
   font-size:11.5px; line-height:1.25; cursor:default;
   display:flex; flex-direction:column; min-height:16px;
 }
-.caleventtitle{font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
-.caleventtime{font-family:var(--font-mono); font-size:10px; opacity:.85;}
+/* Both lines refuse to wrap or shrink. A long meta line ("11:00-11:45 - Classwork")
+   otherwise wrapped to two lines inside a flex column and squeezed the title down
+   to four pixels, which read as an event with no name at all. */
+.caleventtitle{font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:none;}
+.caleventtime{
+  font-family:var(--font-mono); font-size:10px; opacity:.85; flex:none;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+/* A short booking has no room to stack two lines: an hour is one 44px slot, so a
+   quarter of an hour is 11px and the title alone is 14px before padding. Below
+   the height two lines need, the time moves alongside the title instead of under
+   it, which is the difference between a legible event and a clipped smear. */
+.calevent.short{
+  flex-direction:row; align-items:center; gap:6px;
+  min-height:18px; padding:1px 5px 1px 5px; padding-right:14px;
+}
+.calevent.short .caleventtitle{flex:1; min-width:0;}
+.calevent.short .caleventtime{flex:none; font-size:9.5px; white-space:nowrap;}
 .calevent .xbtn{position:absolute; top:0; right:0; color:#fff;}
 .calevent:hover .xbtn{opacity:1;}
 /* planned session work: outlined so a real booking always reads as more solid */
@@ -2248,13 +2264,22 @@ function CalendarDay({ day, data, events, plan, now, onSlotClick, onDelEvent, co
         const box = placeIn(timeToMin(ev.start), timeToMin(ev.end));
         if (!box) return null;
         const cat = cats.find((c) => c.id === ev.cat);
+        // 44px an hour, and two stacked lines need about 31px of it
+        const mins = timeToMin(ev.end) - timeToMin(ev.start);
+        const short = mins < 45;
         return (
-          <div key={ev.id} className={`calevent phaserow ${ev.source === "google" ? "fromgoogle" : ""}`}
+          <div key={ev.id} className={`calevent phaserow ${short ? "short" : ""} ${ev.source === "google" ? "fromgoogle" : ""}`}
             style={{ ...box, background: cat ? cat.color : ev.source === "google" ? "var(--teal)" : "var(--slate)" }}
             title={`${ev.title}${cat ? ` · ${cat.name}` : ""} — ${ev.start}–${ev.end}${ev.source === "google" ? " · from Google Calendar" : ""}`}
             onClick={(e) => e.stopPropagation()}>
             <span className="caleventtitle">{ev.title}</span>
-            <span className="caleventtime">{ev.start}–{ev.end}{cat && !compact ? ` · ${cat.name}` : ""}</span>
+            {/* A short block shows its length, not its span: "09:00-09:10" eats
+                two thirds of a day column and leaves four characters for the
+                name, while the start time is already what the block's position
+                says. The full range stays in the hover title. */}
+            <span className="caleventtime">
+              {short ? `${mins}m` : `${ev.start}–${ev.end}${cat && !compact ? ` · ${cat.name}` : ""}`}
+            </span>
             {/* Google events are a mirror of somewhere else; deleting here would
                 be a lie, so only the app's own events get a remove button */}
             {onDelEvent && ev.source !== "google" && (
