@@ -291,10 +291,17 @@ const CSS = `
 .fw input, .fw select{font-family:inherit; font-size:14px; color:var(--ink);}
 
 /* ---------- header ---------- */
+/* Above the side panels (40/41), not below them. Sticky + z-index makes this a
+   stacking context, so anything that drops out of the header — the update panel
+   — is capped at whatever the header itself is, and no z-index of its own can
+   lift it clear. In a window narrow enough to put the update pill on a second
+   row, its panel hangs down into the calendar panel's column and was painted
+   straight over. The panels don't overlap the header horizontally, since
+   .fw.calopen / .fw.aiopen inset the whole page by their width. */
 .hd{
   display:flex; align-items:center; gap:20px; flex-wrap:wrap;
   padding:14px 22px; border-bottom:1px solid var(--line); background:var(--card);
-  position:sticky; top:0; z-index:20;
+  position:sticky; top:0; z-index:50;
 }
 /* the brand is the theme toggle — there's no separate button for it */
 .brand{
@@ -508,7 +515,20 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
   border-radius:8px; padding:5px 10px 5px 14px;
 }
 .roomstatus{font-size:13px; color:var(--muted);}
-.roomjoin{width:150px; font-family:var(--font-mono); letter-spacing:.14em; text-transform:uppercase;}
+/* The spacing and the capitals are for the six characters you type, so a code
+   reads as a code. Applied to the placeholder too they made "or enter a code"
+   about a third wider than the field and clipped it mid-word, so the placeholder
+   opts out of both. Scoped to .fw because the .fw input rule sets
+   font-family:inherit and outranks a bare class, so the mono asked for here had
+   never actually applied. */
+.fw .roomjoin{
+  width:190px; font-family:var(--font-mono);
+  letter-spacing:.14em; text-transform:uppercase;
+}
+.roomjoin::placeholder{letter-spacing:0; text-transform:none;}
+/* Kept together so they wrap as a pair: on a narrow column the field otherwise
+   broke onto a line of its own, away from the button it's the alternative to. */
+.roomstart{display:flex; gap:10px; align-items:center;}
 .roomname{width:130px;}
 .pomofollow{font-size:13px; color:var(--muted); padding:14px 0 2px;}
 /* someone else's row: theirs to tick off, not yours */
@@ -905,7 +925,9 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 
 @media (max-width:900px){
   .fw.aiopen{padding-right:0;}
-  .aipanel{width:100%;}
+  /* the one case where a side panel really does cover the header, so here it
+     has to outrank it — everywhere else the header wins (see .hd) */
+  .aipanel{width:100%; z-index:55;}
   .aigrip{display:none;}
 }
 @media (max-width:640px){
@@ -4666,12 +4688,12 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
             <button className="qaddperson" onClick={session.leave}>Leave room</button>
           </>
         ) : session.available ? (
-          <>
+          <span className="roomstart">
             <button className="qaddperson" onClick={session.create}>✦ Start a shared room</button>
             <input className="field roomjoin" placeholder="or enter a code" maxLength={6}
               value={roomInput} onChange={(e) => setRoomInput(e.target.value.toUpperCase())}
               onKeyDown={(e) => { if (e.key === "Enter" && roomInput.trim()) { session.join(roomInput); setRoomInput(""); } }} />
-          </>
+          </span>
         ) : (
           <span className="roomstatus">Sign in to share a room with someone else.</span>
         ))}

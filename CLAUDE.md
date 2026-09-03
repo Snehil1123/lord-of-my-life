@@ -1192,3 +1192,20 @@ was continuous compositing, and the rules below are what keep it down.
   `--pine`/`--tomato` accent pair, `var(--font-mono)` for numeric/meta text,
   `var(--font-display)` for headings — never a literal font name, so it
   works in both themes.
+- **Check a new class name against the rest of `CSS` before using it.** It is one
+  flat stylesheet with no nesting or modules, so a repeat quietly takes whichever
+  rule comes last — `.calgrip` for the calendar's resize strips silently
+  inherited the calendar panel's width handle, and the strips came out full
+  height and pinned to the right rather than at the two edges.
+- **Specificity, too**: `.fw input` sets `font-family:inherit`, so a bare class
+  on an `<input>` cannot change its font. `.roomjoin` asked for the mono face for
+  a long time without ever getting it. Scope such a rule to `.fw`.
+- **The z-index order is**: `.fscene` 0, page content 1, the side panels 40 (their
+  drag handles 41, the task timer 40), the header **50**, modals and the sync
+  conflict dialog 60 (`.setwrap`). The header is above the panels because it is a
+  stacking context — sticky with a z-index — so anything that drops out of it,
+  like `.updpanel`, is capped at whatever the header itself is and can't be
+  lifted clear with a z-index of its own. The panels don't overlap the header
+  horizontally, since `.fw.calopen`/`.fw.aiopen` inset the whole page by their
+  width; the one exception is the assistant going full width under 900px, which
+  is why that media query bumps it to 55.
