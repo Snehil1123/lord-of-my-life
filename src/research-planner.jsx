@@ -103,6 +103,7 @@ const CSS = `
 .fw[data-theme="fantasy"] .submeta .taskmin,
 .fw[data-theme="fantasy"] .tag11,
 .fw[data-theme="fantasy"] .pcount,
+.fw[data-theme="fantasy"] .qlen,
 .fw[data-theme="fantasy"] .catcount,
 .fw[data-theme="fantasy"] .subprogress,
 .fw[data-theme="fantasy"] .picksub,
@@ -630,6 +631,25 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .qmain{display:flex; align-items:center; gap:10px; flex:1 1 auto; min-width:0;}
 .qtitle{flex:1 1 auto; min-width:0;}
 .qmeta{display:flex; align-items:center; gap:8px; margin-left:auto; flex:0 0 auto;}
+/* how long this entry still needs, in the same voice as .pcount beside it */
+.qlen{font-family:var(--font-mono); font-size:12px; color:var(--muted); flex:none;}
+/* the two ways to push an entry off, opened under its row — a sibling of the
+   row for the same reason as its subtasks: a click on the row completes it */
+.qpushmenu{
+  display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:-4px 0 8px;
+  padding:6px 10px; border:1px solid var(--line); border-radius:8px;
+  background:var(--paper); font-size:13px; color:var(--muted);
+}
+/* Parked, not gone: stepped in from the queue, dashed and dimmed so it reads as
+   set aside, and inert to the click that completes a live row. */
+.qpushed{margin-top:16px;}
+.qpushedhead{
+  font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em;
+  color:var(--muted); margin:0 0 6px 28px;
+}
+.qrow.pushed{margin-left:28px; opacity:.55; cursor:default; border-style:dashed; transition:opacity .15s ease;}
+.qrow.pushed:hover{opacity:.85;}
+.qback{font-size:12px; color:var(--muted); white-space:nowrap;}
 .qrow:hover{border-color:var(--muted);}
 .qrow.active{border-left-color:var(--tomato);}
 .qrow.done .tasktitle{color:var(--muted); text-decoration:line-through; text-decoration-color:var(--pine);}
@@ -732,8 +752,10 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
   font-size:13.5px; color:var(--muted);
 }
 .qfoot b{font-family:var(--font-mono); color:var(--ink); font-size:15px; font-weight:600;}
-.durs{display:flex; gap:14px; margin-top:20px; align-items:center; justify-content:center; color:var(--muted); font-size:13px;}
-.durs input{width:52px; text-align:center;}
+.durs{display:flex; gap:14px; row-gap:8px; flex-wrap:wrap; margin-top:20px; align-items:center; justify-content:center; color:var(--muted); font-size:13px;}
+.durs input[type="number"]{width:52px; text-align:center;}
+/* the toggles sit tight against their words; the width above is for the number fields */
+.durs label:has(input[type="checkbox"]){display:inline-flex; align-items:center; gap:5px;}
 
 /* ---------- budget ---------- */
 .budgetrow{
@@ -1099,6 +1121,8 @@ const fmtHM = (hm) => {
   return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")}${ampm}`;
 };
 const fmtMin = (n) => fmtHM(minToTime(n));
+// a length of time, not a time of day: "25m", "1h", "1h 30m"
+const fmtDur = (m) => (m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}` : `${Math.max(0, m)}m`);
 // the slice of the day the week grid draws; events outside it are clamped in
 const DAY_START = 7 * 60, DAY_END = 22 * 60;
 const fmtMoney = (n) => n.toLocaleString(undefined, { style: "currency", currency: "USD" });
@@ -1160,6 +1184,23 @@ const endSound = (theme) => (theme === "fantasy" ? shimmer : chime)();
    the setting keeps taking them and needs no migration. */
 const breaksOn = (settings) => settings.breaks !== false;
 const takesBreaks = (data) => breaksOn(data.settings);
+/* A focus session is either the focus setting or exactly as long as the next
+   task. Read as "explicitly task", so data saved before the option runs fixed. */
+const taskTimed = (settings) => settings.timerMode === "task";
+
+/* Pushed-off queue entries, as { qid: epoch ms it comes back }. An instant, not
+   wall-clock like events: "in two hours" means two hours whatever the date.
+   A pushed entry stays in sessionQueue, in its place, so it returns where it
+   was — it is only hidden from everything that plans, times or credits work.
+   An expired entry simply reads as not pushed; nothing has to wake up. */
+const isPushed = (data, qid, nowMs) => ((data.pushedOff || {})[qid] || 0) > nowMs;
+const liveQueueIds = (data, nowMs) => (data.sessionQueue || []).filter((q) => !isPushed(data, q, nowMs));
+// the entry a task-length focus session is for: the first live one with work left
+function nextTimedEntry(data, nowMs, skipQid = null) {
+  const work = data.settings.work;
+  return queueItems(liveQueueIds(data, nowMs), data.tasks, work)
+    .find((q) => q.qid !== skipQid && !q.item.checked && minutesLeft(q.item, work) > 0) || null;
+}
 
 /* ---------------- default data ---------------- */
 /* Categories live in `data.categories` so the user can add their own. These are only
@@ -1338,6 +1379,10 @@ function archiveFinished(data) {
     tasks: data.tasks.filter((t) => !stale(t)),
     archive: [...(data.archive || []), ...going],
     sessionQueue: keep,
+    // the daily sweep is also where push-offs that have come back, or whose
+    // entry left the queue, are dropped — nothing else ever needs to clear them
+    pushedOff: Object.fromEntries(Object.entries(data.pushedOff || {})
+      .filter(([qid, until]) => keep.includes(qid) && until > Date.now())),
   };
 }
 
@@ -1465,9 +1510,13 @@ export default function LordOfMyLife() {
   const timer = usePomodoro(data, setData, dataRef, theme);
   const taskTimer = useTaskTimer(setData, dataRef, theme);
   const authEmail = useAuthEmail();
+  // Pushed-off entries are out of the plan, the finish time and the room. Keyed
+  // on the joined ids rather than on `now`, so the minute tick doesn't hand the
+  // plan and the room presence a fresh array when nothing has come back.
+  const liveKey = liveQueueIds(data, now.getTime()).join("|");
   const roomQueue = useMemo(
-    () => queueItems(data.sessionQueue, data.tasks, data.settings.work).map((q) => q.item),
-    [data.sessionQueue, data.tasks, data.settings.work],
+    () => queueItems(liveKey ? liveKey.split("|") : [], data.tasks, data.settings.work).map((q) => q.item),
+    [liveKey, data.tasks, data.settings.work],
   );
   const session = useSessionRoom({
     defaultName: authEmail ? authEmail.split("@")[0] : "",
@@ -3773,16 +3822,18 @@ function planSession(tasks, events, s, cycle, from, breaks = true) {
   let cursor = new Date(from);
   let cyc = cycle;
 
+  // a task-length timer sits down to each task once, for all of it
+  const sitting = (left) => (taskTimed(s) ? left : s.work);
   for (const t of tasks) {
     let left = minutesLeft(t, s.work);
     if (left <= 0) continue;
-    const count = Math.ceil(left / s.work);
+    const count = Math.ceil(left / sitting(left));
     for (let i = 0; i < count; i++) {
       if (blocks.length > PLAN_CAP) return blocks;
       /* The block is as long as the work actually left, capped at one focus
          length — not always a whole session. A ten-minute task takes ten
          minutes on the timeline, which is what makes the finish time honest. */
-      const span = Math.min(left, s.work);
+      const span = Math.min(left, sitting(left));
       const dur = span * 60000;
       // walk past every event this session would collide with
       for (let guard = 0; guard < busy.length + 1; guard++) {
@@ -3818,7 +3869,10 @@ function sessionStats(tasks, s, cycle, now, breaks = true) {
      how planSession lays blocks down. The finish time is measured in real
      minutes instead: a ten-minute task should push the estimate by ten minutes,
      not by a whole focus length. */
-  const remaining = tasks.reduce((n, t) => n + Math.ceil(minutesLeft(t, s.work) / s.work), 0);
+  const remaining = tasks.reduce((n, t) => {
+    const left = minutesLeft(t, s.work);
+    return n + (taskTimed(s) ? (left > 0 ? 1 : 0) : Math.ceil(left / s.work));
+  }, 0);
   // counted rather than derived from totalEst - remaining, so it stays right
   // whatever rounding the items involve
   const doneEst = Math.min(totalEst, tasks.reduce((n, t) => n + (t.checked ? t.est : t.done), 0));
@@ -3852,8 +3906,22 @@ function askNotifyPermission() {
    running when you leave the Session tab. Held inside SessionView it died on
    unmount — both the state and the interval went with the component. */
 function usePomodoro(data, setData, dataRef, theme) {
-  const s = data.settings;
-  const durFor = (m) => (m === "work" ? s.work : m === "short" ? s.short : s.long) * 60;
+  /* What a countdown of mode `m` should be armed with, read from `d`. In task
+     mode a focus session is as long as the next live task with work left, and
+     remembers which entry that was — the length and the credit have to agree,
+     so completion credits the entry it was armed for rather than re-deriving
+     "active" at the end. `skip` is the entry just finished, so a task the timer
+     has used up isn't handed straight back while it waits to be ticked off. */
+  const lengthFor = (m, d, skip = null) => {
+    const st = d.settings;
+    if (m !== "work") return { secs: (m === "short" ? st.short : st.long) * 60, qid: null };
+    if (!taskTimed(st)) return { secs: st.work * 60, qid: null };
+    const next = nextTimedEntry(d, Date.now(), skip);
+    return next
+      ? { secs: Math.max(60, Math.round(minutesLeft(next.item, st.work) * 60)), qid: next.qid }
+      : { secs: st.work * 60, qid: null };
+  };
+  const durFor = (m) => lengthFor(m, data).secs;
   /* Read through refs at completion time, not captured: onComplete lives inside
      an interval created when `running` flipped, so anything closed over there is
      as old as the session. */
@@ -3862,25 +3930,56 @@ function usePomodoro(data, setData, dataRef, theme) {
   const breaksRef = useRef(takesBreaks(data));
   useEffect(() => { breaksRef.current = takesBreaks(data); }, [data]);
   const [mode, setMode] = useState("work"); // work | short | long
-  const [left, setLeft] = useState(() => data.settings.work * 60);
+  const [armed, setArmed] = useState(() => lengthFor("work", data));
+  const [left, setLeft] = useState(() => armed.secs);
+  const armedRef = useRef(armed);
+  const skipRef = useRef(null);
   const [running, setRunning] = useState(false);
   const [cycle, setCycle] = useState(0); // completed work sessions in current set
   const endRef = useRef(null);
   const tickRef = useRef(null);
 
-  const switchMode = (m) => { setMode(m); setRunning(false); setLeft(durFor(m)); };
-  const reset = () => { setRunning(false); setLeft(durFor(mode)); };
-  const start = () => { askNotifyPermission(); setRunning((r) => !r); };
+  const arm = (m, d = data) => {
+    const a = lengthFor(m, d, skipRef.current);
+    armedRef.current = a;
+    setArmed(a);
+    setLeft(a.secs);
+  };
+  const switchMode = (m) => { setMode(m); setRunning(false); arm(m); };
+  const reset = () => { setRunning(false); arm(mode); };
+  const start = () => {
+    askNotifyPermission();
+    // once you sit down to the next one, the last one is no longer "just finished"
+    if (!running && mode === "work") skipRef.current = null;
+    setRunning((r) => !r);
+  };
+
+  /* A countdown nobody has started follows the queue: in task mode the next task
+     changes whenever you reorder, add, tick off or push something, and a timer
+     still showing the old length would start the wrong session. Only while it
+     sits untouched at its armed length — a paused, part-run session is kept. */
+  useEffect(() => {
+    if (running || mode !== "work" || left !== armedRef.current.secs) return;
+    const want = lengthFor("work", data, skipRef.current);
+    if (want.secs !== armedRef.current.secs || want.qid !== armedRef.current.qid) arm("work", data);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, running, mode]);
 
   const onComplete = () => {
     setRunning(false);
     endSound(themeRef.current);
     const breaks = breaksRef.current;
     if (mode === "work") {
-      // read the queue at completion time, so a session credits whatever is
-      // active when it ends rather than when it started
       const cur = dataRef.current;
-      const active = queueItems(cur.sessionQueue, cur.tasks, cur.settings.work).find((q) => !q.item.checked) || null;
+      const byTask = taskTimed(cur.settings) && armedRef.current.qid;
+      /* Fixed length: credit whatever is active when the session *ends*, not when
+         it started, and a pushed-off entry is never active. Task length: credit
+         the entry the countdown was sized to — it ran that task's whole remaining
+         length, so its sessions are all accounted for, same as the task timer. */
+      const entries = queueItems(liveQueueIds(cur, Date.now()), cur.tasks, cur.settings.work);
+      const active = byTask
+        ? queueItems(cur.sessionQueue, cur.tasks, cur.settings.work).find((q) => q.qid === armedRef.current.qid) || null
+        : entries.find((q) => !q.item.checked) || null;
       const dk = dateKey(new Date());
       setData((prev) => ({
         ...prev,
@@ -3888,18 +3987,21 @@ function usePomodoro(data, setData, dataRef, theme) {
         // a queued subtask has no pomodoro counter of its own — it's ticked off
         // by hand, exactly as subtasks already are in Work/Personal
         tasks: active && !active.sub
-          ? prev.tasks.map((t) => (t.id === active.task.id ? { ...t, done: t.done + 1 } : t))
+          ? prev.tasks.map((t) => (t.id === active.task.id
+            ? { ...t, done: byTask ? t.est : t.done + 1 }
+            : t))
           : prev.tasks,
       }));
+      if (byTask) skipRef.current = armedRef.current.qid;
       const nextCycle = cycle + 1;
       setCycle(nextCycle);
       // with breaks off the timer simply re-arms for the next focus session
       const nm = !breaks ? "work" : nextCycle % 4 === 0 ? "long" : "short";
-      setMode(nm); setLeft(durFor(nm));
+      setMode(nm); arm(nm, cur);
       const what = nm === "work" ? "another focus session is ready" : `time for a ${nm} break`;
-      notify("Focus session complete", active ? `${active.title} — ${what}.` : `${what[0].toUpperCase()}${what.slice(1)}.`);
+      notify("Focus session complete", active ? `${active.item.title} — ${what}.` : `${what[0].toUpperCase()}${what.slice(1)}.`);
     } else {
-      setMode("work"); setLeft(durFor("work"));
+      setMode("work"); arm("work", dataRef.current);
       notify("Break over", "Back to it — a new focus session is ready.");
     }
   };
@@ -3919,7 +4021,12 @@ function usePomodoro(data, setData, dataRef, theme) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running]);
 
-  return { mode, left, running, cycle, durFor, switchMode, reset, start, setLeft };
+  // `total` is what the running countdown was armed with, which is what its
+  // progress bar measures against; `timedQid` is the entry a task-length session is for
+  return {
+    mode, left, running, cycle, durFor, switchMode, reset, start, setLeft,
+    total: armed.secs, timedQid: armed.qid, rearm: arm,
+  };
 }
 
 /* One task, one countdown, no pomodoro — for work that isn't worth splitting
@@ -4086,7 +4193,7 @@ function useSessionRoom({ defaultName, myTasks, timer }) {
           // absolute deadline while running so guests derive from their own clock;
           // `total` rides along because the host's session lengths are theirs, not ours
           endsAt: timer.running ? Date.now() + timer.left * 1000 : null,
-          left: timer.left, total: timer.durFor(timer.mode) }
+          left: timer.left, total: timer.total }
       : null,
   }), [myName, isHostLocal, myTasks, timer.mode, timer.running, timer.cycle, timer.left]);
 
@@ -4147,8 +4254,9 @@ function PeerColumn({ peer, s, now }) {
 }
 
 // what the pomodoro running right now will do to this task
-const SessionMark = ({ t }) => (
-  <span className="qnow">{t.done + 1 >= t.est ? "finishes this session" : "this session"}</span>
+// `whole`: a task-length session runs the task to its end, whatever its count says
+const SessionMark = ({ t, whole }) => (
+  <span className="qnow">{whole || t.done + 1 >= t.est ? "finishes this session" : "this session"}</span>
 );
 
 /* Someone else working alongside you on this device. Their tasks are typed in
@@ -4222,9 +4330,11 @@ function GuestColumn({ guest, s, cycle, now, onAddTask, onToggleTask, onDelTask,
 /* A queued task. The subtask list is a *sibling* of .qrow, not a child — the row
    itself completes the task on click, so nesting the subtasks inside it would
    mean checking a subtask also ticked off its parent. */
-function QueueRow({ entry, data, setData, now, isActive, burst, setBurst, onComplete, onRemove, onTimer, timing, drag }) {
+function QueueRow({ entry, data, setData, now, isActive, wholeSession, burst, setBurst, onComplete, onRemove, onPush, onTimer, timing, drag }) {
   const [expanded, setExpanded] = useState(false);
+  const [pushing, setPushing] = useState(false);
   const t = entry.item;
+  const minsLeft = minutesLeft(t, data.settings.work);
   // A queued subtask is one line of work, not a container: it shows its parent
   // for context and has nothing to expand. Only a whole task offers the list.
   const isSub = !!entry.sub;
@@ -4257,9 +4367,17 @@ function QueueRow({ entry, data, setData, now, isActive, burst, setBurst, onComp
         {/* one flex item, so it wraps under the title as a block rather than
             breaking up across two lines */}
         <span className="qmeta">
-          {isActive && !t.checked && <SessionMark t={t} />}
+          {isActive && !t.checked && <SessionMark t={t} whole={wholeSession} />}
+          {!t.checked && minsLeft > 0 && (
+            <span className="qlen" title={`About ${fmtDur(minsLeft)} of work left on this`}>{fmtDur(minsLeft)}</span>
+          )}
           {subs.length > 0 && <span className="subprogress">{doneSubs}/{subs.length}</span>}
           <span className="pcount">{t.done}/{t.est}</span>
+          {onPush && !t.checked && (
+            <button className="subtoggle" style={pushing ? { color: "var(--ink)" } : undefined}
+              title="Push off — set it aside and have it come back later"
+              onClick={stop(() => setPushing((v) => !v))}>↷</button>
+          )}
           {onTimer && !t.checked && (
             <button className="subtoggle" style={timing ? { color: "var(--pine)" } : undefined}
               title={timing ? "This task's timer is running" : "Time just this task — one countdown, no pomodoro"}
@@ -4272,6 +4390,16 @@ function QueueRow({ entry, data, setData, now, isActive, burst, setBurst, onComp
           <button className="xbtn" title="Remove from session" onClick={stop(onRemove)}>✕</button>
         </span>
       </div>
+
+      {pushing && (
+        <div className="qpushmenu">
+          <span>Push off until</span>
+          <button className="btn ghost aimini" onClick={() => { setPushing(false); onPush("2h"); }}>2 hours from now</button>
+          <button className="btn ghost aimini" onClick={() => { setPushing(false); onPush("tomorrow"); }}>tomorrow</button>
+          <button className="xbtn" style={{ opacity: 1, marginLeft: "auto" }} title="Cancel"
+            onClick={() => setPushing(false)}>✕</button>
+        </div>
+      )}
 
       {expanded && (
         <div className="subtasks qsubtasks">
@@ -4445,9 +4573,19 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
   const [qOverId, setQOverId] = useState(null);
 
   const queueIds = data.sessionQueue || [];
-  const entries = queueItems(queueIds, data.tasks, s.work);
+  const nowMs = now.getTime();
+  const allEntries = queueItems(queueIds, data.tasks, s.work);
+  // pushed-off entries are drawn apart and take no part in the session below
+  const entries = allEntries.filter((q) => !isPushed(data, q.qid, nowMs));
+  const pushed = allEntries.filter((q) => isPushed(data, q.qid, nowMs));
   const queue = entries.map((q) => q.item);
-  const activeEntry = entries.find((q) => !q.item.checked) || null;
+  const byTask = taskTimed(s) && !remote;
+  // with a task-length timer, the task in hand is the one the countdown is sized to
+  // — and when nothing is left to size it to, nothing is "in hand", even an
+  // unticked task the timer has already run to the end
+  const activeEntry = byTask
+    ? entries.find((q) => q.qid === timer.timedQid) || null
+    : entries.find((q) => !q.item.checked) || null;
   const active = activeEntry?.item || null;
   const activeNo = activeEntry ? entries.indexOf(activeEntry) + 1 : 0;
 
@@ -4487,8 +4625,23 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
     setDraft({ ...draft, title: "", minutes: 25, cat: draftCat });
     setCreating(false);
   };
-  const removeFromQueue = (id) =>
-    setData((prev) => ({ ...prev, sessionQueue: (prev.sessionQueue || []).filter((x) => x !== id) }));
+  const removeFromQueue = (id) => setData((prev) => {
+    const { [id]: _gone, ...pushedOff } = prev.pushedOff || {};
+    return { ...prev, sessionQueue: (prev.sessionQueue || []).filter((x) => x !== id), pushedOff };
+  });
+  /* "Tomorrow" is the coming local midnight, so it's back whenever you next sit
+     down the next day. Computed out here and closed over, keeping the updater
+     pure — the same rule as minting an id. */
+  const pushOff = (qid, when) => {
+    const until = when === "tomorrow"
+      ? new Date(new Date().setHours(24, 0, 0, 0)).getTime()
+      : Date.now() + 2 * 60 * 60 * 1000;
+    setData((prev) => ({ ...prev, pushedOff: { ...(prev.pushedOff || {}), [qid]: until } }));
+  };
+  const bringBack = (qid) => setData((prev) => {
+    const { [qid]: _back, ...pushedOff } = prev.pushedOff || {};
+    return { ...prev, pushedOff };
+  });
   // reordering the queue also moves which task is active, since "active" is just
   // the first unchecked one — that's the point of being able to drag them
   const moveInQueue = (fromId, toId) => {
@@ -4534,7 +4687,7 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
     else toggleTask(data, setData, q.task, setBurst);
   };
 
-  const total = remote ? remote.total || durFor(mode) : durFor(mode);
+  const total = remote ? remote.total || durFor(mode) : timer.total;
   const pct = 1 - left / total;
   const mm = String(Math.floor(left / 60)).padStart(2, "0");
   const ss = String(left % 60).padStart(2, "0");
@@ -4577,7 +4730,9 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
         ? (prev.guests || []).map((g) => ({ ...g, tasks: recomputeSessions(g.tasks, val) }))
         : prev.guests,
     }));
-    if (!running) setLeft((k === "work" && mode === "work") || (k === "short" && mode === "short") || (k === "long" && mode === "long") ? val * 60 : left);
+    // re-armed against the new value, not set by hand, so the progress bar's total
+    // moves with it — and in task mode a focus length change leaves the task's own
+    if (!running && k === mode) timer.rearm(k, { ...data, settings: { ...data.settings, [k]: val } });
   };
 
   return (
@@ -4628,8 +4783,9 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
           </div>
         ))}
         <QueueRow entry={q} data={data} setData={setData} now={now}
-          isActive={!!active && t.id === active.id} burst={burst} setBurst={setBurst}
+          isActive={activeEntry?.qid === q.qid} wholeSession={byTask} burst={burst} setBurst={setBurst}
           onComplete={() => completeTask(q)} onRemove={() => removeFromQueue(q.qid)}
+          onPush={(when) => pushOff(q.qid, when)}
           onTimer={taskTimer && (() => taskTimer.startFor(q))} timing={taskTimer?.state?.qid === q.qid}
           drag={qDrag(q.qid)} />
         {(blockers[t.id]?.during || []).map((ev) => (
@@ -4688,7 +4844,10 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
 
       {queue.length > 0 && (
         <div className="qfoot">
-          <span>Sessions <b>{doneEst}/{totalEst}</b></span>
+          {/* a task-length timer sits down to each task once, so tasks are its unit */}
+          {byTask
+            ? <span>Tasks <b>{queue.filter((t) => minutesLeft(t, s.work) === 0).length}/{queue.length}</b></span>
+            : <span>Sessions <b>{doneEst}/{totalEst}</b></span>}
           {remaining > 0 && <span>Finish at <b>{fmtClock(finishAt)}</b> ({fmtSpan})</span>}
           {remaining === 0 && <span><b>All done</b> — nothing left in this session.</span>}
           {ignored.length > 0 && (
@@ -4697,6 +4856,36 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
               {ignored.length} event{ignored.length === 1 ? "" : "s"} ignored — restore
             </button>
           )}
+        </div>
+      )}
+
+      {pushed.length > 0 && (
+        <div className="qpushed">
+          <div className="qpushedhead">Pushed off</div>
+          {pushed.map((q) => {
+            const until = new Date((data.pushedOff || {})[q.qid]);
+            const mins = minutesLeft(q.item, s.work);
+            const when = dateKey(until) === dateKey(now) ? fmtClock(until)
+              : dateKey(until) === dateKey(addDays(now, 1)) ? "tomorrow"
+              : until.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+            return (
+              <div key={q.qid} className="qrow pushed" title={`Pushed off — back ${when}`}>
+                <span className="qmain">
+                  <span className="tasktitle qtitle">
+                    {q.item.title}
+                    {q.sub && <span className="qparent"> · {q.task.title}</span>}
+                  </span>
+                </span>
+                <span className="qmeta">
+                  {!q.item.checked && mins > 0 && <span className="qlen">{fmtDur(mins)}</span>}
+                  <span className="qback">back {when}</span>
+                  <button className="btn ghost aimini" onClick={() => bringBack(q.qid)}
+                    title="Put it back in the session now">Bring back</button>
+                  <button className="xbtn" title="Remove from session" onClick={() => removeFromQueue(q.qid)}>✕</button>
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
       </div>
@@ -4740,13 +4929,22 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
       </div>
 
       <div className="durs">
-        <label>focus <input type="number" className="field" value={s.work} onChange={(e) => setDur("work", e.target.value)} /> min</label>
+        {/* the focus length still sizes each task's session count, but it isn't
+            the timer's length in task mode, so it steps aside there */}
+        {!taskTimed(s) && (
+          <label>focus <input type="number" className="field" value={s.work} onChange={(e) => setDur("work", e.target.value)} /> min</label>
+        )}
         {breaks && <label>short <input type="number" className="field" value={s.short} onChange={(e) => setDur("short", e.target.value)} /> min</label>}
         {breaks && <label>long <input type="number" className="field" value={s.long} onChange={(e) => setDur("long", e.target.value)} /> min</label>}
         <label title="Run focus sessions back to back, with no break between them">
           <input type="checkbox" checked={breaks}
             onChange={(e) => setData((prev) => ({ ...prev, settings: { ...prev.settings, breaks: e.target.checked } }))} />
           {" "}breaks
+        </label>
+        <label title="Instead of a fixed number of minutes, each focus session runs exactly as long as the next task">
+          <input type="checkbox" checked={taskTimed(s)}
+            onChange={(e) => setData((prev) => ({ ...prev, settings: { ...prev.settings, timerMode: e.target.checked ? "task" : "fixed" } }))} />
+          {" "}timer = task length
         </label>
       </div>
     </div>

@@ -96,9 +96,11 @@ process — see "AI assistant".)
 ```
 data = {
   settings: { work, short, long, breaks,  // pomodoro minutes; breaks:false runs them back to back
+              timerMode,                  // "task" sizes each focus session to the next task
               tabs, textSize, fantasyFont, clock24, sounds },  // the gear, see "Settings"
   pomoLog:  { "YYYY-MM-DD": count },      // completed work sessions per day
   sessionQueue: [taskId],                // tasks lined up in the Session tab
+  pushedOff: { qid: epochMs },           // queue entries set aside until then, see "Session queue"
   guests: [{ id, name, tasks: [{ id, title, minutes, est, done, checked }] }],
   categories: [{ id, name, color, group: "work" | "personal" }],
   events: [{ id, title, date: "YYYY-MM-DD", start: "HH:MM", end: "HH:MM", cat? }],
@@ -403,6 +405,52 @@ looking for the old `.timerring` SVG, it was replaced by `.pomoprog`.
   keeps taking them with no migration. With breaks off the timer re-arms straight
   to another focus session, `planSession` lays no break blocks, and
   `sessionStats` adds no break minutes. The short/long inputs hide.
+- **Each queue row shows how long it still needs** (`.qlen`, `fmtDur`), which is
+  `minutesLeft` — the same real-minutes reading the finish time uses, so a task
+  half done shows half its length.
+- **An entry can be pushed off** (↷ on its row → 2 hours from now, or tomorrow).
+  `data.pushedOff` is `{ qid: epoch ms it comes back }`, read through
+  `isPushed`/`liveQueueIds`. Points that matter:
+  - **The entry stays in `sessionQueue`, in its place.** Pushing only hides it
+    from everything that plans, times or credits work, so it returns to where it
+    was and needs nothing to wake it: an expired entry simply reads as not pushed
+    the next time `now` ticks. The daily sweep (`archiveFinished`) is the only
+    thing that clears old entries.
+  - An **instant**, not wall-clock like events — "in two hours" means two hours.
+    "Tomorrow" is the coming local midnight.
+  - **Every live reader of the queue must go through `liveQueueIds`**: the plan
+    and room (`roomQueue`, keyed on the joined live ids so the minute tick
+    doesn't hand them a fresh array), `SessionView`'s entries and stats, and
+    `usePomodoro`'s crediting. That last one read the raw queue before this and
+    would have credited a pushed task.
+  - Pushed rows render in a dimmed, dashed, stepped-in "Pushed off" group below
+    the footer, with no row click — completing something you set aside by
+    brushing past it would be a trap. "Bring back" deletes the entry.
+- **The timer can be sized to the task instead of the focus setting**
+  (`settings.timerMode: "task"`, read by `taskTimed`; the "timer = task length"
+  toggle at the bottom). A focus session then runs exactly as long as the next
+  live entry with work left (`nextTimedEntry`).
+  - **`usePomodoro` tracks what it armed** — `armed: { secs, qid }`, exposed as
+    `total` and `timedQid`. Completion credits *that* entry, not whatever is
+    first when the countdown ends, because the length and the credit have to be
+    about the same task. It credits `done = est` (it ran the task's whole
+    remaining length), the same rule as the task timer; subtasks still get
+    nothing.
+  - **The just-finished entry is skipped when re-arming** (`skipRef`), until the
+    next work session starts. A task with subtasks, or a queued subtask, still
+    has minutes left after crediting, and without the skip the timer hands the
+    same task straight back while it waits to be ticked off.
+  - **An untouched countdown follows the queue**: an effect re-arms it whenever
+    the next task changes — reorder, add, tick off, push, bring back — but only
+    while it sits stopped at exactly its armed length. A paused, part-run
+    session is left alone.
+  - Always set the countdown through `arm`/`rearm`, never `setLeft` directly, or
+    `total` goes stale and the progress bar and room payload measure against the
+    wrong length. `setDur` re-arms for this reason.
+  - `planSession` and `sessionStats` read the mode off `settings` too: one block
+    per task at its full length, and `remaining` counts tasks. The footer says
+    "Tasks n/m" instead of "Sessions", and the focus field hides — it still sizes
+    each task's session count, but it isn't the timer's length.
 - **Timer completion posts a desktop notification** (`notify`). Electron grants
   the permission without prompting; a browser asks, and `askNotifyPermission()`
   is called from Start rather than on load so the prompt is tied to an action.
