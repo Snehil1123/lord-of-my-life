@@ -11,14 +11,53 @@ import { createClient } from "@supabase/supabase-js";
 const url = import.meta.env.VITE_SUPABASE_URL;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+/* A network that can't reach Supabase must look like one, not like Supabase
+   saying no. Office and campus networks commonly answer a blocked host with
+   their own page — an HTML 403, or a redirect to a login portal. auth-js treats
+   any error that isn't a plain fetch failure or a 5xx as the server rejecting
+   the refresh token, and deletes the saved session: the device is signed out
+   for good just by being opened on the wrong wifi. Every genuine Supabase
+   response is JSON (or empty, for a write) from Supabase's own origin, so
+   anything else is re-thrown as the network failure it really is, which
+   auth-js retries later and keeps the session through. */
+async function guardedFetch(input, init) {
+  const res = await fetch(input, init);
+  const type = res.headers.get("content-type") || "";
+  const offOrigin = res.redirected && new URL(res.url).origin !== new URL(url).origin;
+  if (offOrigin || type.includes("text/html") || (!res.ok && !type.includes("json"))) {
+    throw new TypeError(`Couldn't reach the sync server (${res.status}${type ? `, ${type.split(";")[0]}` : ""})`);
+  }
+  return res;
+}
+
 // null when env vars aren't set — app falls back to localStorage-only.
-export const supabase = url && anonKey ? createClient(url, anonKey) : null;
+export const supabase = url && anonKey
+  ? createClient(url, anonKey, { global: { fetch: guardedFetch } })
+  : null;
 
 export const signUp = (email, password) => supabase.auth.signUp({ email, password });
 export const signIn = (email, password) => supabase.auth.signInWithPassword({ email, password });
-export const signOut = () => supabase.auth.signOut();
+/* This device only. The default scope is global, which revokes the refresh token
+   on every device the account is signed in on — signing out at home would sign
+   the work computer out too, and it would find out the next morning. */
+export const signOut = () => supabase.auth.signOut({ scope: "local" });
 export const getSession = async () => (await supabase.auth.getSession()).data.session;
 export const onAuthChange = (cb) => supabase.auth.onAuthStateChange((_event, session) => cb(session));
+
+/* Who this device is signed in as, from what auth-js saved — whether or not the
+   token can be refreshed right now. getSession() can't answer that: an access
+   token lasts an hour, so by the next morning it has always expired, and with
+   no connection to refresh it getSession() reports no session at all even though
+   the refresh token is sitting in storage, untouched. The app used to take that
+   as signed out and show the sign-in form. */
+export function savedAccount() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(supabase.auth.storageKey) || "null");
+    return saved?.refresh_token && saved.user ? { id: saved.user.id, email: saved.user.email } : null;
+  } catch (e) {
+    return null;
+  }
+}
 
 // `_client` is transport bookkeeping, not planner state — it never reaches the app
 const stripClient = ({ _client, ...rest }) => rest;

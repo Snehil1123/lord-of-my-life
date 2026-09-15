@@ -920,6 +920,51 @@ realtime subscription).
   untouched cloud row straight over them, and the push that followed wrote the
   loss up permanently. If you are tempted to simplify the reconnect path back to
   "fetch, then setData", that is the bug.
+- **An edit marks the device `dirty` whether or not there is a live session.** It
+  used to happen only once signed in, so tasks added while signed out left no
+  record that the device held anything, and the next sign-in pulled the account
+  over them. The push effect compares against the last `data` it saw
+  (`seenData`), because it also runs on mount and when a conflict closes and
+  neither is an edit. **Signing out clears `base`, never `dirty`**, for the same
+  reason.
+- **`base === null` means this device has never agreed with this account** (first
+  sign-in, or signing back in). `syncPlan` then asks if the device holds anything
+  the account lacks (`localOnly`) and pulls only if it doesn't. `ConflictDialog`
+  takes a `reason`: `"signin"` offers "Keep them" / "Discard them, use my account"
+  — replacing an account with one device's copy is never what signing in means —
+  and `"diverged"` offers keep the cloud's / keep this device's / **keep both**.
+- **Keep both is `mergeData`**: every list a union by id, this device's version
+  where both have an item, anything else the cloud has added after. Settings
+  come from the cloud; the budget merges item by item; `pomoLog` takes the larger
+  count per day. Never deleting has one cost — something deleted on one side
+  comes back — and that is the safe direction.
+- **Not everything on a device is its user's work.** `sampleData()` flags its
+  tasks and project `sample: true`, and the seeded habits carry `seedKey`;
+  neither counts as "only on this device" nor is carried by a merge. Without that
+  a fresh install's demo tasks joined the account on first sign-in, and a habit
+  the user had deleted from their account came back.
+- **Signed in is not the same as having a session** — see `account` vs `session`
+  in `SyncBar`. An access token lasts an hour, so the first launch of every day
+  has to refresh it, and with no connection auth-js's `getSession()` returns
+  `null` even though the refresh token is untouched in storage. Keying the
+  sign-in form off `session` showed it every morning at work. `savedAccount()`
+  in `sync.js` reads the stored login directly; while there's an account but no
+  session the chip reads "Offline", edits stay on the device, and it retries on
+  `online`, focus and a 60-second interval. auth-js caches a failed refresh for
+  60 seconds (`REFRESH_FAILURE_COOLDOWN_MS`), so an `online` event inside that
+  window does nothing and reconnecting can take up to about a minute — its own
+  30-second ticker and the interval both pick it up. Don't try to beat the
+  cooldown; it exists to stop refresh storms.
+- **A blocked network must not delete the login** — `guardedFetch` in `sync.js`.
+  Office and campus networks answer a blocked host with their own page, and
+  auth-js treats any error that isn't a thrown fetch or a 5xx as Supabase
+  rejecting the refresh token, and removes the saved session. Measured against
+  the real library: an HTML 403 deleted the login; with the guard it's kept. Every
+  genuine Supabase response is JSON (or an empty write) from its own origin, so
+  HTML, a cross-origin redirect, or a non-JSON error is rethrown as a network
+  failure, which auth-js retries. A real rejection is JSON and still signs out.
+- **Sign-out is `scope: "local"`.** The default revokes the refresh token on every
+  device, so signing out at home signed the work computer out too.
 - A failed push leaves edits stranded, so `reconcile()` also runs on the
   `online` event and on window focus whenever `dirty`.
 - The realtime subscription **does not apply a remote row while `dirty`** — our

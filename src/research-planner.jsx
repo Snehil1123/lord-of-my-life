@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
-  supabase, signUp, signIn, signOut, getSession, onAuthChange,
+  supabase, signUp, signIn, signOut, getSession, onAuthChange, savedAccount,
   fetchCloudData, pushCloudData, subscribeToCloudData,
   joinRoom, newRoomCode,
 } from "./sync.js";
@@ -1045,27 +1045,95 @@ const saveSync = (v) => {
    Note what is absent: any comparison of timestamps between machines. Two
    devices' clocks disagree, and a device whose clock is behind would otherwise
    lose every edit it made. */
-function syncPlan({ row, base, dirty }) {
+/* `base === null` means this device has never agreed with this account — first
+   sign-in, or signing back in after signing out. What's on the device then may
+   be tasks typed while signed out (the loss this guards against: they used to be
+   pulled straight over), so if it holds anything the account lacks, ask. If it
+   holds nothing new — a fresh install's sample data, say — the account wins. */
+function syncPlan({ row, base, dirty, localOnly = 0 }) {
   if (!row) return "push";
+  if (base === null) return localOnly > 0 ? "ask" : "pull";
   if (!dirty) return "pull";
   return row.updated_at === base ? "push" : "ask";
 }
 
 /* What actually differs, in the terms the user thinks in. Compared by id so a
-   reordered array doesn't read as a change. */
+   reordered array doesn't read as a change.
+
+   Two things on a device are not its user's work and never count as "only on
+   this device": the sample planner a fresh install starts with (`sample`), and
+   the built-in habits every install seeds under fresh ids (`seedKey`). A seeded
+   habit the account doesn't have is either the account's own copy under another
+   id, or one the user deleted there on purpose — keeping it would bring back a
+   duplicate or a deleted habit. The cloud's copies are hidden from the list the
+   same way when the device has its own. */
 const COLLECTIONS = [["tasks", "tasks"], ["events", "calendar events"], ["projects", "projects"], ["archive", "archived tasks"]];
+const seedKeysIn = (d) => new Set([...(d?.tasks || []), ...(d?.archive || [])].map((t) => t.seedKey).filter(Boolean));
 function diffData(mine, theirs) {
   const out = [];
+  const mySeeds = seedKeysIn(mine);
   for (const [key, label] of COLLECTIONS) {
     const a = mine?.[key] || [], b = theirs?.[key] || [];
     const bIds = new Set(b.map((x) => x.id)), aIds = new Set(a.map((x) => x.id));
-    const onlyMine = a.filter((x) => !bIds.has(x.id));
-    const onlyTheirs = b.filter((x) => !aIds.has(x.id));
+    const onlyMine = a.filter((x) => !bIds.has(x.id) && !x.sample && !x.seedKey);
+    const onlyTheirs = b.filter((x) => !aIds.has(x.id) && !(x.seedKey && mySeeds.has(x.seedKey)));
     if (onlyMine.length || onlyTheirs.length) {
       out.push({ label, onlyMine, onlyTheirs });
     }
   }
   return out;
+}
+const localOnlyCount = (diff) => diff.reduce((n, d) => n + d.onlyMine.length, 0);
+
+/* Both copies at once, for "keep both". Nothing either side has is dropped: every
+   list is a union by id. Where the same item exists on both, this device's
+   version is kept — in every case this is reached, the device is where the most
+   recent work happened (offline, or signed out) — and anything the cloud has
+   that the device doesn't is added after it. The one cost of never deleting is
+   that something deleted on one side comes back; that is the safe direction.
+
+   Whole-planner preferences (settings, which seeds have run, the rollover date)
+   are taken from the cloud, which is the account's, not the device's. The
+   budget is merged item by item, since a purchase logged offline is work too. */
+function mergeData(mine, theirs) {
+  const union = (a = [], b = []) => {
+    const ids = new Set(a.map((x) => x.id));
+    return [...a, ...b.filter((x) => !ids.has(x.id))];
+  };
+  const theirIds = new Set((theirs.tasks || []).map((t) => t.id));
+  const notWork = (t) => t.sample || (t.seedKey && !theirIds.has(t.id));
+  const myTasks = (mine.tasks || []).filter((t) => !notWork(t));
+  const tasks = union(myTasks, theirs.tasks);
+  const live = new Set(tasks.map((t) => t.id));
+  const pomoLog = { ...(theirs.pomoLog || {}) };
+  for (const [day, n] of Object.entries(mine.pomoLog || {})) pomoLog[day] = Math.max(n, pomoLog[day] || 0);
+
+  const budget = mine.budget && theirs.budget ? {
+    ...theirs.budget,
+    categories: union(
+      (mine.budget.categories || []).map((c) => {
+        const t = (theirs.budget.categories || []).find((x) => x.id === c.id);
+        return t ? { ...c, items: union(c.items, t.items), presets: union(c.presets, t.presets) } : c;
+      }),
+      theirs.budget.categories,
+    ),
+  } : theirs.budget || mine.budget;
+
+  return {
+    ...theirs,
+    categories: union(mine.categories, theirs.categories),
+    tasks,
+    // a task can't be both open and archived; the open one is the one you'd look for
+    archive: union((mine.archive || []).filter((t) => !t.sample && !t.seedKey), theirs.archive).filter((t) => !live.has(t.id)),
+    events: union(mine.events, theirs.events),
+    projects: union((mine.projects || []).filter((p) => !p.sample), theirs.projects),
+    sessionQueue: [...new Set([...(mine.sessionQueue || []), ...(theirs.sessionQueue || [])])]
+      .filter((q) => live.has(qidTask(q))),
+    pushedOff: { ...(theirs.pushedOff || {}), ...(mine.pushedOff || {}) },
+    ignoredEvents: [...new Set([...(mine.ignoredEvents || []), ...(theirs.ignoredEvents || [])])],
+    pomoLog,
+    budget,
+  };
 }
 
 /* ---------------- user settings ----------------
@@ -1301,7 +1369,7 @@ function sampleData() {
     budget: defaultBudget(),
     projects: [
       {
-        id: uid(), name: "Dissertation — Aim 2", color: PROJ_COLORS[0],
+        id: uid(), name: "Dissertation — Aim 2", color: PROJ_COLORS[0], sample: true,
         phases: [
           { id: uid(), name: "Pilot experiments", start: iso(addDays(m0, -21)), end: iso(addDays(m0, 6)), done: false },
           { id: uid(), name: "Full data collection", start: iso(addDays(m0, 7)), end: iso(addDays(m0, 41)), done: false },
@@ -1311,12 +1379,12 @@ function sampleData() {
       },
     ],
     tasks: [
-      { id: uid(), title: "Rerun pilot with corrected buffer concentration", cat: "research", minutes: 75, est: 3, done: 0, checked: false, oneOnOne: true },
-      { id: uid(), title: "Send PI the updated figure 2 draft", cat: "research", minutes: 50, est: 2, done: 1, checked: false, oneOnOne: true },
-      { id: uid(), title: "Draft NSF fellowship personal statement", cat: "fellowships", minutes: 50, est: 2, done: 0, checked: false, oneOnOne: false },
-      { id: uid(), title: "Problem set 4", cat: "classwork", minutes: 75, est: 3, done: 0, checked: false, oneOnOne: false },
-      { id: uid(), title: "Grade lab reports", cat: "ta", minutes: 50, est: 2, done: 0, checked: false, oneOnOne: false },
-      { id: uid(), title: "Book flights for October conference", cat: "other", minutes: 25, est: 1, done: 0, checked: false, oneOnOne: false },
+      { id: uid(), title: "Rerun pilot with corrected buffer concentration", cat: "research", minutes: 75, est: 3, done: 0, checked: false, oneOnOne: true, sample: true },
+      { id: uid(), title: "Send PI the updated figure 2 draft", cat: "research", minutes: 50, est: 2, done: 1, checked: false, oneOnOne: true, sample: true },
+      { id: uid(), title: "Draft NSF fellowship personal statement", cat: "fellowships", minutes: 50, est: 2, done: 0, checked: false, oneOnOne: false, sample: true },
+      { id: uid(), title: "Problem set 4", cat: "classwork", minutes: 75, est: 3, done: 0, checked: false, oneOnOne: false, sample: true },
+      { id: uid(), title: "Grade lab reports", cat: "ta", minutes: 50, est: 2, done: 0, checked: false, oneOnOne: false, sample: true },
+      { id: uid(), title: "Book flights for October conference", cat: "other", minutes: 25, est: 1, done: 0, checked: false, oneOnOne: false, sample: true },
       ...recurringSeedTasks(),
     ],
   };
@@ -1755,16 +1823,23 @@ function UpdatePill() {
 /* Shown only when both this device and the cloud changed since they last agreed.
    Every other case resolves itself; this one cannot be guessed, so it asks — and
    until it is answered nothing is pushed and nothing is overwritten. */
-function ConflictDialog({ diff, onKeepMine, onKeepCloud }) {
+/* Keeping both is the first choice in either case, since it's the only one that
+   can't lose anything. Signing in with work on the device offers just the two
+   choices that make sense there — replacing the whole account with one device's
+   copy is never what someone signing in means. */
+function ConflictDialog({ diff, reason, onKeepMine, onKeepCloud, onKeepBoth }) {
   const sample = (list) => list.slice(0, 4).map((x) => x.title || x.name).filter(Boolean);
+  const signin = reason === "signin";
   return (
     <div className="setwrap">
-      <div className="setpanel" role="dialog" aria-label="Sync conflict">
-        <div className="sethead"><span className="h2">This device and the cloud disagree</span></div>
+      <div className="setpanel" role="dialog" aria-label={signin ? "Work on this device" : "Sync conflict"}>
+        <div className="sethead">
+          <span className="h2">{signin ? "This device has work your account doesn't" : "This device and the cloud disagree"}</span>
+        </div>
         <p className="sethint" style={{ marginBottom: 4 }}>
-          Both changed since they were last in step — most likely this device was offline while
-          another one kept going. Nothing has been overwritten. Pick which version to keep;
-          the other is replaced, so check the list first.
+          {signin
+            ? "You added these while signed out. Nothing has been overwritten yet. Keep them and they join your account alongside everything already in it."
+            : "Both changed since they were last in step — most likely this device was offline while another one kept going. Nothing has been overwritten. Keeping both loses nothing; choosing one side replaces the other, so check the list first."}
         </p>
         <div className="setgroup">
           {diff.map(({ label, onlyMine, onlyTheirs }) => (
@@ -1785,9 +1860,19 @@ function ConflictDialog({ diff, onKeepMine, onKeepCloud }) {
             </div>
           ))}
         </div>
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button className="btn" onClick={onKeepCloud}>Keep the cloud's</button>
-          <button className="btn primary" onClick={onKeepMine}>Keep this device's</button>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+          {signin ? (
+            <>
+              <button className="btn" onClick={onKeepCloud}>Discard them, use my account</button>
+              <button className="btn primary" onClick={onKeepBoth}>Keep them</button>
+            </>
+          ) : (
+            <>
+              <button className="btn" onClick={onKeepCloud}>Keep the cloud's</button>
+              <button className="btn" onClick={onKeepMine}>Keep this device's</button>
+              <button className="btn primary" onClick={onKeepBoth}>Keep both</button>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -1884,7 +1969,14 @@ function SettingsPanel({ data, setData, theme, onClose }) {
 }
 
 function SyncBar({ data, setData }) {
+  /* Two different things. `session` is a usable, refreshed login — what every
+     network call needs. `account` is who this device is signed in as, read from
+     what auth-js saved, and it survives having no connection. Keying the sign-in
+     form off `session` is what signed people out every morning: an access token
+     lasts an hour, so the first launch of the day always has to refresh it, and a
+     launch with no connection reported no session and showed the form. */
   const [session, setSession] = useState(null);
+  const [account, setAccount] = useState(() => (supabase ? savedAccount() : null));
   const [status, setStatus] = useState("offline"); // offline | connecting | synced | error
   const [form, setForm] = useState({ email: "", password: "", mode: "signin" });
   const [authError, setAuthError] = useState("");
@@ -1892,14 +1984,31 @@ function SyncBar({ data, setData }) {
   const skipNextPush = useRef(false); // true while applying a remote update, so we don't echo it straight back
   const dataRef = useRef(data);
   useEffect(() => { dataRef.current = data; }, [data]);
-  const [conflict, setConflict] = useState(null); // { mine, theirs, diff }
+  const [conflict, setConflict] = useState(null); // { mine, theirs, at, diff, reason }
 
   useEffect(() => {
     if (!supabase) return;
-    getSession().then(setSession);
-    const { data: sub } = onAuthChange(setSession);
+    const take = (s) => {
+      setSession(s);
+      setAccount(s ? { id: s.user.id, email: s.user.email } : savedAccount());
+    };
+    getSession().then(take);
+    const { data: sub } = onAuthChange(take);
     return () => sub.subscription.unsubscribe();
   }, []);
+
+  /* Signed in but not connected: keep trying to turn the saved login back into a
+     live one — when the machine reports a network, when the window comes back,
+     and once a minute for networks that change without saying so (joining a
+     hotspot doesn't always fire "online"). A success arrives through onAuthChange. */
+  useEffect(() => {
+    if (!supabase || session || !account) return;
+    const retry = () => { getSession().then((s) => s && setSession(s)).catch(() => {}); };
+    const id = setInterval(retry, 60 * 1000);
+    window.addEventListener("online", retry);
+    window.addEventListener("focus", retry);
+    return () => { clearInterval(id); window.removeEventListener("online", retry); window.removeEventListener("focus", retry); };
+  }, [session, account]);
 
   const applyRemote = (remote, base) => {
     skipNextPush.current = true;
@@ -1927,15 +2036,21 @@ function SyncBar({ data, setData }) {
       const row = await fetchCloudData(session.user.id);
       const { base, dirty } = loadSync();
       const mine = dataRef.current;
+      const diff = row ? diffData(mine, row.data) : [];
+      const localOnly = localOnlyCount(diff);
 
-      const plan = syncPlan({ row, base, dirty });
+      const plan = syncPlan({ row, base, dirty, localOnly });
       if (plan === "push") { await pushLocal(mine); return; }
       if (plan === "pull") { applyRemote(row.data, row.updated_at); setStatus("synced"); return; }
 
-      // both sides moved since we last agreed — never guess, and never delete
-      const diff = diffData(mine, row.data);
+      // both sides hold something the other doesn't — never guess, and never delete
       if (!diff.length) { await pushLocal(mine); return; }  // diverged, but nothing actually differs
-      setConflict({ mine, theirs: row.data, at: row.updated_at, diff });
+      setConflict({
+        mine, theirs: row.data, at: row.updated_at, diff,
+        // signing in with work already on the device reads differently from two
+        // devices that drifted apart, and is offered fewer ways to go wrong
+        reason: base === null && localOnly > 0 ? "signin" : "diverged",
+      });
       setStatus("error");
     } catch (e) {
       setStatus("error"); // offline: keep the local edits and the dirty flag
@@ -1968,14 +2083,25 @@ function SyncBar({ data, setData }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, conflict]);
 
-  // push local edits up, debounced — skipped once right after applying a remote update
+  /* Push local edits up, debounced — skipped once right after applying a remote
+     update.
+
+     An edit marks the device dirty whether or not there is a live session. This
+     used to happen only once signed in, so tasks added while signed out, or
+     while the login couldn't be refreshed, left no record that the device held
+     anything new — and the next sign-in pulled the account straight over them.
+     Only a real change counts: this effect also runs on mount and when a
+     conflict closes, and neither is an edit. */
+  const seenData = useRef(data);
   useEffect(() => {
-    if (!supabase || !session) return;
-    if (skipNextPush.current) { skipNextPush.current = false; return; }
+    if (!supabase) return;
+    if (skipNextPush.current) { skipNextPush.current = false; seenData.current = data; return; }
+    const edited = data !== seenData.current;
+    seenData.current = data;
     // recorded before the debounce, so quitting while offline still remembers
     // that this device is holding unsynced work
-    saveSync({ ...loadSync(), dirty: true });
-    if (conflict) return; // don't race the user's answer
+    if (edited) saveSync({ ...loadSync(), dirty: true });
+    if (!session || conflict) return; // nowhere to push to yet, or don't race the user's answer
     clearTimeout(pushTimer.current);
     pushTimer.current = setTimeout(async () => {
       try { await pushLocal(data); }
@@ -1989,7 +2115,13 @@ function SyncBar({ data, setData }) {
     const c = conflict;
     setConflict(null);
     if (keep === "cloud") { applyRemote(c.theirs, c.at); setStatus("synced"); return; }
-    try { await pushLocal(c.mine); } catch (e) { setStatus("error"); }
+    /* "both" replaces what's on screen with the merge, so it is applied like a
+       remote row — no echo push from the effect — and then written up once.
+       Merged from the snapshot the dialog showed, deliberately: that is what the
+       user agreed to keep. */
+    const payload = keep === "both" ? hydrate(mergeData(c.mine, c.theirs)) : c.mine;
+    if (keep === "both") { skipNextPush.current = true; setData(payload); }
+    try { await pushLocal(payload); } catch (e) { saveSync({ ...loadSync(), dirty: true }); setStatus("error"); }
   };
 
   if (!supabase) return null; // no Supabase env vars — cloud sync UI stays hidden
@@ -2002,7 +2134,17 @@ function SyncBar({ data, setData }) {
     } catch (e) { setAuthError(e.message); }
   };
 
-  if (!session) {
+  /* Forgets which account the device agreed with, but not that it holds unsynced
+     work. Clearing `dirty` here too meant signing out and back in pulled the
+     account over anything that hadn't gone up yet. */
+  const doSignOut = async () => {
+    saveSync({ ...loadSync(), base: null });
+    await signOut().catch(() => {});
+    setSession(null);
+    setAccount(savedAccount());
+  };
+
+  if (!session && !account) {
     return (
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
         <input className="field" style={{ width: 130 }} type="email" placeholder="email"
@@ -2019,18 +2161,24 @@ function SyncBar({ data, setData }) {
     );
   }
 
+  // signed in, but the login can't be refreshed from here: work stays on the device
+  const waiting = !session;
   const statusLabel = conflict ? "Needs a decision"
+    : waiting ? "Offline"
     : { connecting: "Syncing…", synced: "Synced", error: "Not synced" }[status] || "Offline";
   return (
     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-      <span className="wkchip" style={{ color: status === "error" ? "var(--tomato)" : "var(--muted)" }}
-        title={status === "error" ? "Your changes are saved on this device and will go up when the connection returns." : ""}>
+      <span className="wkchip" style={{ color: status === "error" && !waiting ? "var(--tomato)" : "var(--muted)" }}
+        title={waiting
+          ? `Signed in as ${account?.email || "your account"}. Can't reach the sync server from this network, so changes are kept on this device and go up as soon as it can.`
+          : status === "error" ? "Your changes are saved on this device and will go up when the connection returns." : ""}>
         {statusLabel}
       </span>
-      <button className="btn ghost" onClick={() => { saveSync({ base: null, dirty: false }); signOut(); }}>Sign out</button>
+      <button className="btn ghost" onClick={doSignOut}>Sign out</button>
       {conflict && (
-        <ConflictDialog diff={conflict.diff}
-          onKeepMine={() => resolveConflict("mine")} onKeepCloud={() => resolveConflict("cloud")} />
+        <ConflictDialog diff={conflict.diff} reason={conflict.reason}
+          onKeepMine={() => resolveConflict("mine")} onKeepCloud={() => resolveConflict("cloud")}
+          onKeepBoth={() => resolveConflict("both")} />
       )}
     </div>
   );
