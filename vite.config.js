@@ -68,6 +68,9 @@ const pwa = () => ({
   },
   workbox: {
     globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
+    // the share card is fetched by link scrapers, never by the app — precaching
+    // it would make every visitor download 40KB they will never see
+    globIgnores: ["og.png"],
     navigateFallback: "index.html",
     cleanupOutdatedCaches: true,
     runtimeCaching: [

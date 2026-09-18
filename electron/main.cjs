@@ -25,6 +25,7 @@ if (gpu === "low") app.commandLine.appendSwitch("force_low_power_gpu");
 
 function createWindow() {
   const win = new BrowserWindow({
+    title: "Lord of My Life",
     width: 1180,
     height: 800,
     minWidth: 720,
@@ -37,6 +38,11 @@ function createWindow() {
       preload: path.join(__dirname, "preload.cjs"),
     },
   });
+
+  /* The window would otherwise take its name from <title>, which the web build
+     writes for search results rather than for a title bar. The desktop app is
+     called what it is called. */
+  win.on("page-title-updated", (e) => e.preventDefault());
 
   if (isDev) {
     win.loadURL("http://localhost:5173");

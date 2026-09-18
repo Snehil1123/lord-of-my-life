@@ -5,14 +5,61 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#171C18" />
-    <meta name="description" content="A personal planner: project timelines, tasks, focus sessions, and a budget." />
+    <title>Lord of My Life — a planner for research</title>
+    <meta name="description" content="A personal planner built around how research actually goes: project timelines, tasks with due dates and subtasks, pomodoro focus sessions, a calendar, and a monthly budget. Free, works offline, and syncs across your devices." />
+    <link rel="canonical" href="https://lordofmylife.net/" />
     <link rel="icon" type="image/svg+xml" href="./icon.svg" />
     <link rel="apple-touch-icon" href="./icon-192.png" />
-    <title>Lord of My Life</title>
-    <style>html,body{background:#171C18;}</style>
+
+    <!-- what a pasted link unfurls into. Absolute URLs: a relative one is
+         resolved against the scraper, not the page, and silently shows nothing. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Lord of My Life" />
+    <meta property="og:title" content="Lord of My Life" />
+    <meta property="og:description" content="Project timelines, tasks and due dates, focus sessions, and a monthly budget — in one planner. Free, works offline, syncs across your devices." />
+    <meta property="og:url" content="https://lordofmylife.net/" />
+    <meta property="og:image" content="https://lordofmylife.net/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Lord of My Life — a personal planner" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <style>
+      html,body{background:#171C18;}
+      /* What stands in the root until React takes it: the page describing
+         itself, so the first paint is the app arriving rather than a black
+         rectangle — and so a crawler that runs no JavaScript still finds out
+         what this is. main.jsx clears it. */
+      .boot{
+        max-width:640px; margin:0 auto; padding:14vh 24px 0;
+        font-family:system-ui,-apple-system,"Segoe UI",sans-serif; color:#8DA091;
+      }
+      .boot h1{font-size:30px; font-weight:700; color:#E8ECE6; margin:0 0 14px;}
+      .boot h1 em{color:#FF6E4A; font-style:normal;}
+      .boot p{font-size:16px; line-height:1.6; margin:0 0 14px;}
+      .boot ul{font-size:15px; line-height:1.9; padding-left:20px; margin:0;}
+      .boot b{color:#57B08A; font-weight:600;}
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot">
+        <h1>Lord of <em>my Life</em></h1>
+        <p>
+          A personal planner built around how research actually goes: the long project
+          timelines, the day-to-day tasks underneath them, and the focus sessions you
+          get them done in.
+        </p>
+        <ul>
+          <li><b>Work and Personal</b> — tasks under sections you define, with due dates and subtasks.</li>
+          <li><b>Gantt chart</b> — projects broken into dated phases, and every deadline on one timeline.</li>
+          <li><b>Session</b> — a pomodoro timer with a queue, showing what time you'll finish.</li>
+          <li><b>Calendar</b> — a week of events with your planned focus sessions drawn over it.</li>
+          <li><b>Budget</b> — fixed costs, spend-down budgets, and one-click presets.</li>
+        </ul>
+        <p>Free, works offline, and syncs across your devices. Loading…</p>
+      </div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

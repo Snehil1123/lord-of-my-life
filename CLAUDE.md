@@ -1347,9 +1347,26 @@ already sat behind a seam that feature-detects its bridge.
 - `.github/workflows/pages.yml` deploys on every push to `main` — no tag, unlike
   releases. Plain `npm ci` there: skipping install scripts to avoid the Agent
   SDK's platform binary also skips esbuild's, and Vite then won't build.
-- The icons are committed PNGs rendered from `public/icon.svg` by
+- The icons and the share card are committed PNGs rendered by
   `scripts/make-icons.cjs` (run by hand under Electron), so neither CI nor a
-  contributor needs an image toolchain.
+  contributor needs an image toolchain. **The artwork lives in `design/`, not
+  `public/`** — sources shouldn't be published beside the thing built from them;
+  the one exception is `icon.svg`, which is copied across because it is served
+  as the favicon itself.
+- **`og.png` is excluded from the precache** (`globIgnores`). Only link scrapers
+  ever fetch it, so precaching it made every visitor download 40KB they would
+  never see. Open Graph URLs must be **absolute** — a relative one is resolved
+  against the scraper rather than the page and silently unfurls nothing.
+- **`index.html` parks a plain description of the app inside `#root`**, which
+  `main.jsx` clears before mounting. It is a real loading state, not hidden text
+  for crawlers: it says what the page is while the bundle arrives, and a crawler
+  running no JavaScript finds something other than an empty div. What Google
+  actually indexes after rendering is the app, which is someone's task list —
+  so the title, the description and this block are the only real content the
+  site has, and there isn't much more to give it.
+- **The `<title>` is written for a search result, so the Electron window can't
+  use it** — `main.cjs` pins its own title and preventDefaults
+  `page-title-updated`, or the desktop app's title bar reads like a listing.
 - **Desktop browsers only, for now.** The calendar's drag-to-create is
   mouse-events only and the side panels assume a wide window; a phone pass is a
   separate change, not something to half-do inside another one.

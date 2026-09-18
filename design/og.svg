@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <rect width="1200" height="630" fill="#171C18"/>
+  <g transform="translate(96 196) scale(0.46)">
+    <path d="M112 342 L112 178 L184 258 L256 146 L328 258 L400 178 L400 342 Z" fill="#E0AC5C"/>
+    <rect x="98" y="342" width="316" height="54" rx="14" fill="#E0AC5C"/>
+    <circle cx="112" cy="166" r="18" fill="#57B08A"/>
+    <circle cx="256" cy="132" r="20" fill="#FF6E4A"/>
+    <circle cx="400" cy="166" r="18" fill="#57B08A"/>
+    <circle cx="256" cy="369" r="15" fill="#171C18"/>
+  </g>
+  <text x="352" y="286" font-family="Bricolage Grotesque, Inter, system-ui, sans-serif" font-size="82" font-weight="700" fill="#E8ECE6">Lord of <tspan fill="#FF6E4A">my Life</tspan></text>
+  <text x="356" y="348" font-family="Inter, system-ui, sans-serif" font-size="31" fill="#8DA091">Project timelines, tasks and due dates, focus sessions,</text>
+  <text x="356" y="392" font-family="Inter, system-ui, sans-serif" font-size="31" fill="#8DA091">and a monthly budget — in one planner.</text>
+  <rect x="356" y="440" width="152" height="6" rx="3" fill="#57B08A"/>
+  <text x="356" y="500" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="26" fill="#57B08A">lordofmylife.net</text>
+</svg>
