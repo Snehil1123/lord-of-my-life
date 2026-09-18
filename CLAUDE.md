@@ -1225,6 +1225,80 @@ the rebuild, [src/update.js](src/update.js) is the renderer seam, `UpdatePill` i
   reopens the version you had. `--dir` builds to a temp directory and renames,
   so a failed build leaves the previous one intact.
 
+## Web app
+
+The same source is also served from GitHub Pages at
+`https://snehil1123.github.io/lord-of-my-life/`. It is **not a port** — it is a
+second Vite mode over the same file, because the app was always browser code
+(`npm run dev` has run it in a tab from the start) and each Electron-bound piece
+already sat behind a seam that feature-detects its bridge.
+
+- **`vite build --mode web` is the whole switch** (`npm run build:web`), and
+  `vite.config.js` branches on it twice: `base` becomes `/lord-of-my-life/`
+  rather than `"./"`, and `vite-plugin-pwa` is added. **The Electron path must
+  keep the relative base** — it loads `dist/index.html` over `file://`. The
+  absolute base isn't cosmetic either: a service worker's scope and the
+  manifest's `start_url` are resolved as real paths.
+- **Everything else feature-detects rather than reading the mode.** The one
+  exception is `WEB_BUILD` in `research-planner.jsx`, which hides the assistant:
+  a missing bridge is something to explain in dev, but on the web the assistant
+  is a feature that doesn't apply and shouldn't be offered at all. Don't reach
+  for `WEB_BUILD` where "is there a bridge" already answers the question.
+- **The service worker is what makes it the same app rather than a website.** A
+  tab with no service worker simply fails to load with the network down, which
+  would throw away the offline behaviour "Cloud sync" describes at length — and
+  the person that behaviour was built for opens this on a network that blocks
+  Supabase every morning.
+- **There is no update pill on the web, and there must not be one.** A website
+  should simply be current; a version number to accept is desktop furniture,
+  needed there only because updating means quitting and reinstalling. So the
+  worker is `registerType: "autoUpdate"` (skip waiting, claim the page) and
+  `updaterAvailable()` is false without the Electron bridge, which is what keeps
+  `UpdatePill` from rendering at all. `src/update.js` still owns `kind: "git"`
+  and `kind: "app"`; the web has no `kind`.
+- **The reload that takes a new build happens during startup only**
+  (`initWebApp`, `STARTUP_MS`). Installing one means downloading the whole
+  precache, so it cannot be instant — but a page that reloads while someone is
+  typing takes the sentence with it, so it is skipped once they have touched the
+  page or the window has passed. They get it the next time they open the app,
+  which is what "always launches the latest" actually means. Two guards, both
+  load-bearing: **a page with no controller is a first visit**, and the worker
+  claiming it is not an update — reloading there restarts the app for no reason
+  (this is exactly the bug that showed a first-time visitor an update); and
+  nothing polls for updates, so a long-open tab is never interrupted.
+- **Google Calendar signs in differently and it is visible to the user.** A tab
+  has no loopback listener, so `gcal.js` uses Google Identity Services' token
+  client, which returns an access token and **no refresh token**. So a browser
+  connection is an hour long, renewed silently on the existing 5-minute poll,
+  against the desktop's days. It needs a *separate* OAuth client of type "Web
+  application" (`VITE_GOOGLE_WEB_CLIENT_ID`) — a desktop client id is rejected
+  outright. After one silent renewal fails, `needsClick` stops it retrying:
+  renewal opens a popup, and a popup outside a click is blocked, so without the
+  flag it would throw a blocked window at the user every five minutes all day.
+  The fetch deliberately mirrors `electron/gcal.cjs`'s `listEvents` shape so
+  `toPlannerEvent` stays the only RFC3339 → wall-clock conversion.
+- **Two tabs are a case the desktop never has.** Both hold their own `data` and
+  write the same localStorage key, so the second one's debounced save would land
+  on top of the first's work. A `storage` event never fires in the tab that
+  caused it, so anything arriving is another tab's: adopt it outright, or
+  `mergeData` it when this tab has a save still pending. `saveData` returns what
+  it wrote so a tab can recognise its own value echoing back and stop the two of
+  them writing at each other forever. Adopting marks the device dirty and pushes
+  once, which is correct — it really does now hold work the cloud may not.
+- The anon key ships in the bundle exactly as it already does inside the
+  installer; `supabase/schema.sql` restricts every row to its own user. What
+  *does* need doing by hand is adding the Pages URL to Supabase's Site URL and
+  Redirect URLs, or confirmation emails point at localhost.
+- `.github/workflows/pages.yml` deploys on every push to `main` — no tag, unlike
+  releases. Plain `npm ci` there: skipping install scripts to avoid the Agent
+  SDK's platform binary also skips esbuild's, and Vite then won't build.
+- The icons are committed PNGs rendered from `public/icon.svg` by
+  `scripts/make-icons.cjs` (run by hand under Electron), so neither CI nor a
+  contributor needs an image toolchain.
+- **Desktop browsers only, for now.** The calendar's drag-to-create is
+  mouse-events only and the side panels assume a wide window; a phone pass is a
+  separate change, not something to half-do inside another one.
+
 ## Settings
 
 The gear in the header, `SettingsPanel`. **Deliberately not a tab**, since which

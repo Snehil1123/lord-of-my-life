@@ -1,0 +1,73 @@
+name: Web app
+
+# Publishes the hosted version to GitHub Pages on every push to main:
+#   https://snehil1123.github.io/lord-of-my-life/
+#
+# One-time setup: Settings -> Pages -> Source: "GitHub Actions". Then add the
+# Pages URL to Supabase -> Authentication -> URL Configuration (Site URL and
+# Redirect URLs), or confirmation and password-reset emails point at localhost.
+#
+# Uses the same repo secrets as release.yml, plus VITE_GOOGLE_WEB_CLIENT_ID —
+# Google's browser sign-in needs an OAuth client of type "Web application" with
+# this site as an authorized JavaScript origin, which the desktop client is not.
+# Vite inlines these at build time; a missing one just disables that feature.
+#
+# The Supabase anon key ships in the bundle, exactly as it already does inside
+# the installer. That is what an anon key is for: supabase/schema.sql restricts
+# every row to its own user, so the key on its own reads nothing.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; a half-published site is worse than a late one.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Plain `npm ci`, even though the web build never uses the Agent SDK's
+      # ~293MB platform binary: skipping install scripts to avoid it also skips
+      # esbuild's, and Vite then refuses to build at all.
+      - run: npm ci
+
+      - name: Write .env.local
+        shell: bash
+        run: |
+          {
+            echo "VITE_SUPABASE_URL=${{ secrets.VITE_SUPABASE_URL }}"
+            echo "VITE_SUPABASE_ANON_KEY=${{ secrets.VITE_SUPABASE_ANON_KEY }}"
+            echo "VITE_GOOGLE_WEB_CLIENT_ID=${{ secrets.VITE_GOOGLE_WEB_CLIENT_ID }}"
+          } > .env.local
+
+      - run: npm run build:web
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

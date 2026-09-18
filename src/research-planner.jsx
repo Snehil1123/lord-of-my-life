@@ -14,6 +14,12 @@ import { updaterAvailable, checkForUpdate, runUpdate, downloadUpdate, installUpd
    Classwork / TA) · Session (pomodoro focus) · Personal (everything else)
    ============================================================ */
 
+/* The hosted version (npm run build:web). Everything else in here feature-detects
+   instead — the seams already ask whether their bridge exists — but the assistant
+   needs the Claude Agent SDK in a Node process, so on the web it isn't a missing
+   bridge to explain, it's a feature that doesn't apply and shouldn't be offered. */
+const WEB_BUILD = import.meta.env.MODE === "web";
+
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Alegreya+SC:wght@400;700&family=Alegreya+Sans:wght@400;500;700&family=Alegreya:wght@400;500;700&family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Cinzel:wght@400;600;700;800&family=Courier+Prime:wght@400;700&family=EB+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Grenze+Gotisch:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Literata:opsz,wght@7..72,400..700&family=Marcellus&family=Space+Mono:wght@400;700&family=Spectral:wght@400;500;600;700&family=Uncial+Antiqua&family=Vollkorn:wght@400;600;700&display=swap');
 
@@ -729,6 +735,8 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
   border:1px solid var(--line); border-radius:var(--radius); background:var(--card);
   padding:12px; box-shadow:0 12px 32px rgba(0,0,0,.35);
 }
+/* hangs the other way when hanging left would put it off the window — see UpdatePill */
+.updpanel.flip{left:0; right:auto;}
 .updhead{font-family:var(--font-display); font-weight:700; font-size:14px;}
 .updsubject{font-size:12.5px; color:var(--muted); margin-top:4px;}
 .updnote{font-size:12.5px; color:var(--muted); margin-top:8px; line-height:1.45;}
@@ -1463,8 +1471,12 @@ function loadData() {
   } catch (e) { /* first run — no key yet, or corrupt JSON */ }
   return null;
 }
+// returns what it wrote, so a tab can recognise its own value coming back to it
+// through another tab's echo and stop the two of them writing at each other
 function saveData(data) {
-  try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) { /* storage full or unavailable */ }
+  const json = JSON.stringify(data);
+  try { localStorage.setItem(KEY, json); } catch (e) { /* storage full or unavailable */ }
+  return json;
 }
 
 // Backfills missing fields (recurring seeds, budget) and reopens recurring tasks.
@@ -1505,6 +1517,8 @@ export default function LordOfMyLife() {
     return n >= CALW_MIN && n <= CALW_MAX ? n : 280;
   });
   const saveTimer = useRef(null);
+  const savedJson = useRef(null);
+  const savePending = useRef(false);
   // AiPanel's tool loop spans several awaits and several writes; reading `data` from its
   // closure would hand the second tool call a snapshot from before the first one landed.
   const dataRef = useRef(data);
@@ -1549,10 +1563,37 @@ export default function LordOfMyLife() {
   // debounced save
   useEffect(() => {
     if (!data) return;
+    savePending.current = true;
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => saveData(data), 500);
+    saveTimer.current = setTimeout(() => {
+      savedJson.current = saveData(data);
+      savePending.current = false;
+    }, 500);
     return () => clearTimeout(saveTimer.current);
   }, [data]);
+
+  /* The hosted version can be open in two tabs; a desktop window is alone on its
+     machine. Both tabs hold their own copy of `data` and write the same
+     localStorage key, so without this the second one's debounced save lands on
+     top of whatever the first just added. Signed in, the realtime channel already
+     reconciles two devices — but not in the 600ms before a push, and not at all
+     signed out, which is exactly when localStorage is the only copy.
+
+     A `storage` event never fires in the tab that caused it, so anything arriving
+     here is another tab's. Adopt it outright unless this tab has an edit of its
+     own still waiting to be written, in which case merge — the same union-by-id
+     that "keep both" uses, which can duplicate a deletion but can't lose work. */
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== KEY || !e.newValue || e.newValue === savedJson.current) return;
+      let theirs;
+      try { theirs = JSON.parse(e.newValue); } catch (err) { return; }
+      savedJson.current = e.newValue; // already in storage; don't write it straight back
+      setData((prev) => hydrate(savePending.current ? mergeData(prev, theirs) : theirs));
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   // catch day rollover while the app stays open: on refocus and every few minutes
   useEffect(() => {
@@ -1643,7 +1684,7 @@ export default function LordOfMyLife() {
         {view !== "calendar" && !calOpen && (
           <button className="btn ghost" title="Show today's calendar" onClick={() => setCalOpen(true)}>▤ Today</button>
         )}
-        {!aiOpen && <button className="btn ghost" title={`Open the ${assistantLabel.toLowerCase()}`} onClick={() => setAiOpen(true)}>✦ {assistantLabel}</button>}
+        {!WEB_BUILD && !aiOpen && <button className="btn ghost" title={`Open the ${assistantLabel.toLowerCase()}`} onClick={() => setAiOpen(true)}>✦ {assistantLabel}</button>}
         <button className="btn ghost" title="Settings" aria-label="Settings"
           onClick={() => setSettingsOpen(true)}>⚙</button>
         <UpdatePill />
@@ -1728,6 +1769,19 @@ function UpdatePill() {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [pct, setPct] = useState(0);
+  const [flip, setFlip] = useState(false);
+  const panelRef = useRef(null);
+
+  /* The panel hangs to the left of its pill, which is right for a header laid out
+     in one row. Once the header wraps, the pill sits near the left edge and 290px
+     of panel hangs off the window — so measure where it actually landed and hang
+     it the other way instead. Measured rather than keyed to a breakpoint: where
+     the header wraps depends on how many tabs are showing, and the rect is in the
+     same space the zoom setting scales, so it stays right at any text size. */
+  useEffect(() => {
+    if (!open) { setFlip(false); return; }
+    if (panelRef.current?.getBoundingClientRect().left < 8) setFlip(true);
+  }, [open]);
 
   useEffect(() => {
     if (!updaterAvailable()) return onUpdateProgress(() => {});
@@ -1783,7 +1837,7 @@ function UpdatePill() {
         Update
       </button>
       {open && (
-        <div className="updpanel">
+        <div className={`updpanel ${flip ? "flip" : ""}`} ref={panelRef}>
           <div className="updhead">
             {state.kind === "app"
               ? `Version ${state.version} is available`
@@ -3330,8 +3384,9 @@ function CalendarView({ data, setData, now, plan, events, gcal }) {
    same blocks — rather than a separate agenda that could disagree with it. */
 /* Connect / disconnect, and what account is feeding events in. */
 function GoogleChip({ gcal }) {
-  if (!gcal.available) return <span className="roomstatus">Google Calendar needs the desktop app.</span>;
-  if (!gcal.configured) return <span className="roomstatus">Google Calendar isn't configured in this build.</span>;
+  // one message for both: a browser build without a web client id and a desktop
+  // build without a desktop one are the same thing to the person reading it
+  if (!gcal.available || !gcal.configured) return <span className="roomstatus">Google Calendar isn't configured in this build.</span>;
   if (!gcal.connected) {
     return (
       <button className="btn" onClick={gcal.connect} disabled={gcal.busy}>

@@ -4,7 +4,14 @@ A personal planner built around how research actually goes: long project
 timelines, the day-to-day tasks under them, and the focus sessions you get them
 done in.
 
+**[▶ Open it in your browser](https://snehil1123.github.io/lord-of-my-life/)** ·
 **[⬇ Download the latest version for Windows](https://github.com/Snehil1123/lord-of-my-life/releases/latest)**
+
+Same planner either way, same account, same data — sign in and the two stay in
+step. The web version needs no install, works with the network down once it has
+loaded, and can be installed from the browser to get its own window and icon.
+The one thing it doesn't have is the Assistant, which runs the Claude Agent SDK
+in a Node process and so only exists in the desktop app.
 
 The installer isn't code-signed, so Windows will object in one of two ways:
 
@@ -84,6 +91,34 @@ block that stops the downloaded installer, because it never carried a
 mark-of-the-web. Stop the dev server before running this — a live file watcher
 can hold a handle in `release/` and fail the build with `EPERM`.
 
+## The web version
+
+The same source builds a hosted version, served from GitHub Pages:
+
+```bash
+npm run build:web     # dist/, with a service worker and a web app manifest
+npm run preview:web   # http://localhost:4173/lord-of-my-life/
+```
+
+It differs from the desktop app in three ways, all of them deliberate:
+
+- **No Assistant.** It needs the Claude Agent SDK running in a Node process,
+  authenticated by your own Claude subscription. There's no honest browser
+  equivalent, so the button simply isn't there.
+- **Google Calendar signs in through the browser** instead of a loopback
+  redirect, which means an access token and no refresh token: a connection lasts
+  about an hour and renews itself quietly while the tab is open. Set
+  `VITE_GOOGLE_WEB_CLIENT_ID` to a *Web application* OAuth client — the desktop
+  client id won't work — with the site's origin listed under Authorized
+  JavaScript origins.
+- **No update step.** There's no Update pill: a new build is picked up the next
+  time you open it. The desktop app asks first because updating it means quitting
+  and reinstalling; here it costs a reload, so it just happens — and never while
+  you're in the middle of typing.
+
+Desktop browsers for now; a phone will load it, but the layout and the calendar's
+drag-to-create both assume a mouse and a wide window.
+
 ## Releasing
 
 Tag and push; the workflow in `.github/workflows/release.yml` builds the
@@ -93,6 +128,12 @@ installed copies read to update themselves.
 ```bash
 git tag v0.2.0 && git push origin v0.2.0
 ```
+
+The web version needs no tag — `.github/workflows/pages.yml` rebuilds and
+redeploys it on every push to `main`. It reads the same repo secrets, plus
+`VITE_GOOGLE_WEB_CLIENT_ID`. Turn it on once under Settings → Pages → Source:
+GitHub Actions, and add the Pages URL to Supabase → Authentication → URL
+Configuration so confirmation emails don't point at localhost.
 
 ### Code signing (optional)
 
