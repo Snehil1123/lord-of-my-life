@@ -1224,6 +1224,26 @@ function taskUrgency(t, now) {
   return null;
 }
 
+/* When the day's reminder fires, or null for off. Read through a helper with a
+   default like every other setting, so data saved before it existed needs no
+   migration — `null` is off, missing is 5pm. */
+const remindAt = (settings) => (settings.remindAt === undefined ? "17:00" : settings.remindAt);
+
+/* Everything still open and dated today, named the way it should be read out.
+   A subtask counts on its own: `deriveFromSubtasks` gives a parent the *latest*
+   of its subtask dates, so one due this afternoon under a task due Friday would
+   otherwise go unmentioned. Listing the subtasks instead of the parent is also
+   what keeps the same work from being counted twice. */
+function dueToday(tasks, today) {
+  const out = [];
+  for (const t of tasks) {
+    const subs = (t.subtasks || []).filter((x) => !x.checked && x.dueDate === today);
+    if (subs.length) { out.push(...subs.map((x) => `${t.title}: ${x.title}`)); continue; }
+    if (!t.checked && t.dueDate === today) out.push(t.title);
+  }
+  return out;
+}
+
 /* ---------------- sounds ---------------- */
 function tone(freqA, freqB, dur = 0.28, vol = 0.12) {
   if (!SOUND_ON) return;
@@ -1494,6 +1514,9 @@ const AIW_MIN = 300, AIW_MAX = 860;
 const CALW_KEY = "lordofmylife:calwidth";
 const CALW_MIN = 220, CALW_MAX = 480;
 
+// which day the reminder last went out, per device — see the effect in LordOfMyLife
+const REMIND_KEY = "lordofmylife:reminded";
+
 const THEME_KEY = "lordofmylife:theme";
 const THEMES = { dark: "fantasy", fantasy: "dark" }; // maps a theme to "what toggling gives you"
 
@@ -1594,6 +1617,38 @@ export default function LordOfMyLife() {
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
+
+  /* One notification a day, once the clock passes the reminder time, naming what
+     is dated today and still open. Driven by the same minute tick the due-date
+     glow uses, so it arrives while the app sits open rather than only on a
+     reload — and it fires on opening the app after the time too, since "these are
+     due today and unfinished" is just as true at seven as at five.
+
+     The stamp is per-device localStorage, deliberately not `data`: a reminder is
+     about a machine you are sitting at, and syncing it would mean whichever
+     device happened to be open first silently used up everyone's reminder. It is
+     written whether or not anything was due, so adding a task at eight doesn't
+     set the day's reminder off again the minute after. */
+  useEffect(() => {
+    const at = remindAt(data.settings);
+    if (!at) return;
+    const today = dateKey(now);
+    const [h, m] = at.split(":").map(Number);
+    if (now.getHours() * 60 + now.getMinutes() < h * 60 + m) return;
+    try {
+      if (localStorage.getItem(REMIND_KEY) === today) return;
+      localStorage.setItem(REMIND_KEY, today);
+    } catch (e) { /* storage unavailable — then it simply reminds again later */ }
+    const open = dueToday(data.tasks, today);
+    if (!open.length) return;
+    notify(
+      open.length === 1 ? "Due today" : `${open.length} things due today`,
+      open.length === 1
+        ? `${open[0]} — still not done.`
+        : `${open.slice(0, 3).join(", ")}${open.length > 3 ? `, and ${open.length - 3} more` : ""}.`,
+      "loml-due",
+    );
+  }, [now, data.tasks, data.settings]);
 
   // catch day rollover while the app stays open: on refocus and every few minutes
   useEffect(() => {
@@ -1938,6 +1993,12 @@ function ConflictDialog({ diff, reason, onKeepMine, onKeepCloud, onKeepBoth }) {
 function SettingsPanel({ data, setData, theme, onClose }) {
   const st = data.settings;
   const set = (patch) => setData((prev) => ({ ...prev, settings: { ...prev.settings, ...patch } }));
+  const at = remindAt(st);
+  /* Asking for permission has to come off a click, so it rides the On button
+     rather than happening on load — the same reason Start asks rather than the
+     Session tab. Electron grants it without prompting, so this is a browser
+     concern only. */
+  const blocked = typeof Notification !== "undefined" && Notification.permission === "denied";
   const shown = st.tabs || ALL_VIEWS.map(([k]) => k);
   const toggleView = (k) => {
     const next = shown.includes(k) ? shown.filter((x) => x !== k) : [...shown, k];
@@ -1985,6 +2046,25 @@ function SettingsPanel({ data, setData, theme, onClose }) {
           <div className="setchips">
             <button className={`setchip ${!st.clock24 ? "on" : ""}`} onClick={() => set({ clock24: false })}>12 hour</button>
             <button className={`setchip ${st.clock24 ? "on" : ""}`} onClick={() => set({ clock24: true })}>24 hour</button>
+          </div>
+        </div>
+
+        <div className="setgroup">
+          <div className="setlabel">Daily reminder</div>
+          <p className="sethint">
+            A notification naming anything due today you haven't finished. It needs the app
+            open at the time — nothing runs in the background.
+            {blocked && " Notifications are blocked for this site; allow them in your browser to turn this on."}
+          </p>
+          <div className="setchips">
+            <button className={`setchip ${at ? "on" : ""}`}
+              onClick={() => { askNotifyPermission(); set({ remindAt: at || "17:00" }); }}>On</button>
+            <button className={`setchip ${at ? "" : "on"}`} onClick={() => set({ remindAt: null })}>Off</button>
+            {at && (
+              <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 6 }}>
+                at <input type="time" className="field" value={at} onChange={(e) => set({ remindAt: e.target.value || "17:00" })} />
+              </label>
+            )}
           </div>
         </div>
 
@@ -4119,10 +4199,12 @@ function sessionStats(tasks, s, cycle, now, breaks = true) {
    off here is the same edit as checking it off in Work, and shows up everywhere. */
 /* Desktop notification when a timer runs out. Electron grants permission without
    prompting; a browser asks the first time. Silently does nothing if blocked. */
-function notify(title, body) {
+// `tag` replaces the previous notification wearing it rather than stacking — one
+// per kind, so the day's reminder can't bury the timer's or vice versa
+function notify(title, body, tag = "loml-timer") {
   try {
     if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
-    new Notification(title, { body, tag: "loml-timer", renotify: true });
+    new Notification(title, { body, tag, renotify: true });
   } catch (e) { /* unsupported or blocked */ }
 }
 function askNotifyPermission() {

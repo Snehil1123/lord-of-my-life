@@ -46,6 +46,8 @@ See "Releasing" below.
   Google Calendar (read-only) and those events come in too.
 - **Budget** — a month at a glance: fixed costs, spend-down budgets you draw
   against, and one-click presets for things you buy often.
+- **A daily reminder** — one notification at 5pm (or whenever you set it) naming
+  anything due today you haven't finished. It needs the app open at the time.
 - **Assistant** — a panel that can edit the planner directly: break a task into
   subtasks, or research a real fellowship deadline and lay out a timeline
   backwards from it.

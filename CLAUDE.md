@@ -467,7 +467,9 @@ looking for the old `.timerring` SVG, it was replaced by `.pomoprog`.
 - **Timer completion posts a desktop notification** (`notify`). Electron grants
   the permission without prompting; a browser asks, and `askNotifyPermission()`
   is called from Start rather than on load so the prompt is tied to an action.
-  `notify` silently does nothing when permission isn't granted.
+  `notify` silently does nothing when permission isn't granted. Its `tag` names
+  the *kind* of notification — one per kind replaces rather than stacks, so the
+  day's reminder can't bury the timer's.
 - **A single task can be timed on its own**, without the pomodoro — `useTaskTimer`
   plus the fixed-corner `TaskTimer` card, started by the ⏱ on any queue row. It
   is a second, independent clock, not a mode of the first: starting one doesn't
@@ -678,6 +680,32 @@ UTC would roll a date over early for anyone west of UTC in the evening (e.g.
 date comparisons, and would have done the same to the recurring-task and
 `pomoLog` "today" checks. Don't reintroduce `toISOString()` for anything
 that means "today" in the user's local time.
+
+## The daily reminder
+
+One notification a day, once the clock passes `settings.remindAt` (5pm by
+default, `null` for off), naming anything dated today and still open. The effect
+lives in `LordOfMyLife`, beside the rollover sweep.
+
+- **Driven by the same minute tick the due-date glow uses**, so it arrives while
+  the app sits open rather than only on a reload. It also fires on opening the
+  app *after* the time — "these are due today and unfinished" is as true at seven
+  as at five — which is the case that matters most, since nothing runs in the
+  background and a closed app reminds nobody.
+- **A subtask counts on its own.** `deriveFromSubtasks` gives a parent the
+  *latest* of its subtask dates, so one due this afternoon under a task due
+  Friday would otherwise never be mentioned. `dueToday` lists the subtasks when
+  any are due, and the task itself otherwise, which is also what stops the same
+  work being counted twice.
+- **The "already reminded" stamp is per-device localStorage**
+  (`lordofmylife:reminded`), deliberately not `data`. A reminder is about a
+  machine you are sitting at; syncing it would mean whichever device happened to
+  be open first silently used up everyone's reminder for the day.
+- It is stamped **whether or not anything was due**, so adding a task at eight
+  doesn't set the day's reminder off again a minute later.
+- `askNotifyPermission()` rides the settings toggle's On button rather than
+  running on load, for the same reason Start asks: a browser only grants the
+  prompt off a gesture. Electron needs none of this.
 
 ## Daily rollover and the archive
 
