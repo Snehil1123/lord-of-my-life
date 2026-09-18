@@ -4,7 +4,7 @@ A personal planner built around how research actually goes: long project
 timelines, the day-to-day tasks under them, and the focus sessions you get them
 done in.
 
-**[▶ Open it in your browser](https://snehil1123.github.io/lord-of-my-life/)** ·
+**[▶ Open it in your browser](https://lordofmylife.net)** ·
 **[⬇ Download the latest version for Windows](https://github.com/Snehil1123/lord-of-my-life/releases/latest)**
 
 Same planner either way, same account, same data — sign in and the two stay in
@@ -100,7 +100,7 @@ The same source builds a hosted version, served from GitHub Pages:
 
 ```bash
 npm run build:web     # dist/, with a service worker and a web app manifest
-npm run preview:web   # http://localhost:4173/lord-of-my-life/
+npm run preview:web   # http://localhost:4173/
 ```
 
 It differs from the desktop app in three ways, all of them deliberate:
@@ -134,9 +134,13 @@ git tag v0.2.0 && git push origin v0.2.0
 
 The web version needs no tag — `.github/workflows/pages.yml` rebuilds and
 redeploys it on every push to `main`. It reads the same repo secrets, plus
-`VITE_GOOGLE_WEB_CLIENT_ID`. Turn it on once under Settings → Pages → Source:
-GitHub Actions, and add the Pages URL to Supabase → Authentication → URL
-Configuration so confirmation emails don't point at localhost.
+`VITE_GOOGLE_WEB_CLIENT_ID`.
+
+It is served from `lordofmylife.net`, which `public/CNAME` sets. The domain's DNS
+lives at Cloudflare: four A records and four AAAA records on the apex pointing at
+GitHub Pages, plus `www` as a CNAME. **Those records must be DNS-only, not
+proxied** — Cloudflare's proxy intercepts the HTTP challenge GitHub uses to issue
+the certificate, so "Enforce HTTPS" can never turn on behind an orange cloud.
 
 ### Code signing (optional)
 

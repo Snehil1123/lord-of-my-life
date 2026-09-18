@@ -21,13 +21,15 @@ function buildCommit() {
 
    default — the desktop app. Electron loads dist/index.html over file://, which
    is why base has to be relative.
-   web     — the hosted version at /lord-of-my-life/ on GitHub Pages. An absolute
-   base here, because a service worker's scope and the manifest's start_url are
-   resolved as real paths and "./" leaves them ambiguous. */
+   web     — the hosted version at lordofmylife.net. An absolute base here,
+   because a service worker's scope and the manifest's start_url are resolved as
+   real paths and "./" leaves them ambiguous. It is the site root rather than a
+   repo subpath because of the custom domain — public/CNAME is what sets that,
+   and the two have to change together or every asset 404s. */
 export default defineConfig(({ mode }) => {
   const web = mode === "web";
   return {
-    base: web ? "/lord-of-my-life/" : "./",
+    base: web ? "/" : "./",
     plugins: [
       react(),
       ...(web ? [VitePWA(pwa())] : []),

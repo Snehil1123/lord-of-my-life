@@ -1268,18 +1268,32 @@ the rebuild, [src/update.js](src/update.js) is the renderer seam, `UpdatePill` i
 
 ## Web app
 
-The same source is also served from GitHub Pages at
-`https://snehil1123.github.io/lord-of-my-life/`. It is **not a port** — it is a
+The same source is also served from GitHub Pages at `https://lordofmylife.net`.
+It is **not a port** — it is a
 second Vite mode over the same file, because the app was always browser code
 (`npm run dev` has run it in a tab from the start) and each Electron-bound piece
 already sat behind a seam that feature-detects its bridge.
 
 - **`vite build --mode web` is the whole switch** (`npm run build:web`), and
-  `vite.config.js` branches on it twice: `base` becomes `/lord-of-my-life/`
-  rather than `"./"`, and `vite-plugin-pwa` is added. **The Electron path must
-  keep the relative base** — it loads `dist/index.html` over `file://`. The
-  absolute base isn't cosmetic either: a service worker's scope and the
-  manifest's `start_url` are resolved as real paths.
+  `vite.config.js` branches on it twice: `base` becomes `/` rather than `"./"`,
+  and `vite-plugin-pwa` is added. **The Electron path must keep the relative
+  base** — it loads `dist/index.html` over `file://`. The absolute base isn't
+  cosmetic either: a service worker's scope and the manifest's `start_url` are
+  resolved as real paths.
+- **`base` and `public/CNAME` have to change together.** The base is the site
+  root because the custom domain serves it there; it was `/lord-of-my-life/` while
+  the site lived on a repo subpath. Publish one without the other and every asset
+  404s. Sequencing matters too: the DNS records have to resolve *before* the CNAME
+  is published, or GitHub starts redirecting the old URL to a domain that answers
+  nothing.
+- **The Cloudflare records must be DNS-only, not proxied.** GitHub issues the
+  certificate through an HTTP challenge on the domain, and Cloudflare's proxy
+  answers that itself, so "Enforce HTTPS" never becomes available behind an
+  orange cloud.
+- **Changing the origin stranded any signed-out browser data.** `localStorage` is
+  per-origin, so work someone did on the old `github.io` URL without an account
+  did not follow them to the new domain. Signed-in data was safe — it was in
+  Supabase. Worth remembering before ever moving the origin again.
 - **Everything else feature-detects rather than reading the mode.** The one
   exception is `WEB_BUILD` in `research-planner.jsx`, which hides the assistant:
   a missing bridge is something to explain in dev, but on the web the assistant
