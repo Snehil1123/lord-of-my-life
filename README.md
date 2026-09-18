@@ -31,7 +31,8 @@ See "Releasing" below.
 
 - **Work / Personal** — tasks under sections you define, each with a length, an
   optional due date, and subtasks. Due dates glow gold on the day and pulse red
-  once they're late.
+  once they're late. Editing a task lets you move it to any other section,
+  including one on the other tab.
 - **Gantt Chart** — projects broken into dated phases, optionally grouped into
   sections (one per fellowship, say), plus every dated task on one timeline.
 - **Session** — a pomodoro timer with a queue of tasks, showing how many

@@ -163,6 +163,9 @@ bottom of Work or Personal.
   header simply isn't rendered otherwise. Deleting one with tasks would strand
   them: nothing renders a task whose `cat` matches no category (which is also
   what already happens to tasks left over from the pre-redesign category names).
+  Emptying it is what the edit form's section picker is for; before that existed
+  the only ways out were deleting the tasks or finishing them, and a section you
+  no longer wanted with work still in it was a dead end.
 - Colors cycle through `CAT_COLORS`, which are `var(--…)` tokens so they follow
   the theme. Note this is the opposite constraint from Gantt section colors,
   which must stay hex literals because they get an alpha suffix.
@@ -187,7 +190,17 @@ bottom of Work or Personal.
 - **Tasks are reorderable by dragging the row.** `moveTask` uses the same
   shuffle-and-write-back as `moveCat`, over one category's slots in the flat
   `tasks` array. **Dropping onto a row in a different category is ignored** —
-  a drag reorders, it never refiles a task. The whole row is the handle rather
+  a drag reorders, it never refiles a task.
+- **Refiling is the edit form's job instead** (`TaskRow`'s pencil → the "in"
+  picker). It lists *every* category rather than this view's, in Work/Personal
+  `<optgroup>`s — a task filed under Work can turn out to be personal, and the
+  group labels are what warn you the row is about to leave the tab you are
+  looking at. Two things follow from `cat` being independent of everything else
+  in the patch: a task **with subtasks** can still be refiled even though it
+  sends no minutes/dueDate, so `patch.minutes === undefined` in `editTask` means
+  "leave the timings alone", **not** "title only"; and nothing else has to move,
+  since subtasks live on the task and `sectionId` (the Gantt grouping) is a
+  separate field that a refile deliberately doesn't touch. The whole row is the handle rather
   than a grip, since a grip on every task row would be a lot of furniture; the
   `editing` branch returns before the drag props are applied, so an open edit
   form is never draggable.

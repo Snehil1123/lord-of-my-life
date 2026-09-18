@@ -2610,24 +2610,35 @@ function dragHandlers(drag) {
   };
 }
 
-function TaskRow({ t, burst, onToggle, onToggleAll, onDelete, onEdit, onAddSubtask, onToggleSubtask, onDeleteSubtask, onEditSubtask, now, sessionMin, inSession, queuedSubs, sessionEmoji, drag }) {
+function TaskRow({ t, burst, cats, onToggle, onToggleAll, onDelete, onEdit, onAddSubtask, onToggleSubtask, onDeleteSubtask, onEditSubtask, now, sessionMin, inSession, queuedSubs, sessionEmoji, drag }) {
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [title, setTitle] = useState(t.title);
   const [minutes, setMinutes] = useState(t.minutes || t.est * sessionMin);
   const [dueDate, setDueDate] = useState(t.dueDate || "");
+  const [cat, setCat] = useState(t.cat);
 
   const hasSubs = t.subtasks && t.subtasks.length > 0;
 
   const startEdit = () => {
-    setTitle(t.title); setMinutes(t.minutes || t.est * sessionMin); setDueDate(t.dueDate || "");
+    setTitle(t.title); setMinutes(t.minutes || t.est * sessionMin); setDueDate(t.dueDate || ""); setCat(t.cat);
     setEditing(true);
   };
   const commit = () => {
     if (!title.trim()) return;
-    onEdit(t.id, hasSubs ? { title: title.trim() } : { title: title.trim(), minutes: Math.max(5, +minutes || 25), dueDate: dueDate || null });
+    // `cat` rides along whether or not the rest of the patch does — a task with
+    // subtasks sends a title-only patch but can still be refiled
+    onEdit(t.id, hasSubs
+      ? { title: title.trim(), cat }
+      : { title: title.trim(), minutes: Math.max(5, +minutes || 25), dueDate: dueDate || null, cat });
     setEditing(false);
   };
+
+  /* Every section, not just this view's: a task filed under Work can turn out to
+     be personal, and the group labels are what make it clear the row is about to
+     leave the tab you are looking at. */
+  const groups = [["work", "Work"], ["personal", "Personal"]]
+    .filter(([g]) => (cats || []).some((c) => c.group === g));
 
   const urgency = taskUrgency(t, now);
 
@@ -2648,6 +2659,17 @@ function TaskRow({ t, burst, onToggle, onToggleAll, onDelete, onEdit, onAddSubta
               due <input type="date" className="field" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
             </label>
           </>
+        )}
+        {groups.length > 0 && (
+          <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 5 }}>
+            in <select className="field" value={cat} onChange={(e) => setCat(e.target.value)} title="Move to another section">
+              {groups.map(([g, label]) => (
+                <optgroup key={g} label={label}>
+                  {cats.filter((c) => c.group === g).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </optgroup>
+              ))}
+            </select>
+          </label>
         )}
         <button className="btn primary" onClick={commit}>Save</button>
         <button className="btn ghost" onClick={() => setEditing(false)}>Cancel</button>
@@ -2716,15 +2738,19 @@ function TaskRow({ t, burst, onToggle, onToggleAll, onDelete, onEdit, onAddSubta
 
 // shared by WorkView/PersonalView — recomputes est from the edited minutes (using the
 // current focus-session length), clamps done so it never exceeds the new est. A task with
-// subtasks only ever sends a title-only patch (minutes/dueDate follow the subtasks).
+// subtasks sends no minutes/dueDate (those follow the subtasks) — but it can still carry a
+// `cat`, so `patch.minutes === undefined` means "leave the timings alone", not "title only".
 function editTask(data, setData, id, patch) {
   setData((prev) => ({
     ...prev,
     tasks: prev.tasks.map((x) => {
       if (x.id !== id) return x;
-      if (patch.minutes === undefined) return { ...x, title: patch.title };
+      // refiling is independent of the rest of the patch, and of whether the task
+      // has subtasks — they move with it, since they live on the task itself
+      const moved = patch.cat && patch.cat !== x.cat ? { cat: patch.cat } : {};
+      if (patch.minutes === undefined) return { ...x, ...moved, title: patch.title };
       const est = estFor(patch.minutes, prev.settings.work);
-      return { ...x, title: patch.title, minutes: patch.minutes, dueDate: patch.dueDate, est, done: Math.min(x.done, est) };
+      return { ...x, ...moved, title: patch.title, minutes: patch.minutes, dueDate: patch.dueDate, est, done: Math.min(x.done, est) };
     }),
   }));
 }
@@ -3619,7 +3645,7 @@ function TaskGroupView({ data, setData, now, group, title, sessionEmoji }) {
             </div>
             <div className="card">
               {list.map((t) => (
-                <TaskRow key={t.id} t={t} burst={burst} onToggle={toggle} onToggleAll={() => toggleAll(t.id)}
+                <TaskRow key={t.id} t={t} burst={burst} cats={allCats(data)} onToggle={toggle} onToggleAll={() => toggleAll(t.id)}
                   onDelete={delTask} onEdit={edit} now={now} sessionMin={data.settings.work}
                   inSession={queued.has(t.id)} queuedSubs={queuedSubs} sessionEmoji={sessionEmoji} drag={taskDrag(t.id)}
                   onAddSubtask={(t2, minutes, dueDate) => addSub(t.id, t2, minutes, dueDate)}
