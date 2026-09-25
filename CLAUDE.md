@@ -169,21 +169,37 @@ bottom of Work or Personal.
 - Colors cycle through `CAT_COLORS`, which are `var(--…)` tokens so they follow
   the theme. Note this is the opposite constraint from Gantt section colors,
   which must stay hex literals because they get an alpha suffix.
-- **`dragHandlers(drag)`** (above `TaskRow`) is shared by `TaskRow` and
-  `QueueRow` and carries three things a native HTML5 drag needs to look right:
-  - an explicit `setDragImage` offset to where the cursor grabbed the row,
-    taken from a **detached opaque clone** (`makeDragImage`), never the live
-    element. Handing Chromium the real row lets the bitmap pick up whatever the
-    source is doing — the fade, and its transparent edges, since a row paints no
-    background beyond the card behind it. The clone must be parked *inside* the
-    `.fw` root: on `document.body` it falls outside every theme-scoped rule and
-    renders the ghost in the wrong palette and fonts;
-  - the source row's fade deferred a tick, because the snapshot is taken
-    synchronously during `dragstart` and fading in the same tick bakes the
-    transparency into the image you drag around. **That deferred setter is
-    guarded on the drag ref**, or a drag ending within that tick lets the
-    timeout re-apply `dragging` after cleanup and strand a permanently faded
-    row;
+- **Dragging is pointer events, not HTML5 drag-and-drop** — `beginPointerDrag`
+  and `dragHandlers` (above `TaskRow`), shared by `TaskRow`, `QueueRow` and the
+  section headers. **iOS does not implement HTML5 drag at all**: on an iPad a
+  press-and-drag on a task selected its text and the row never moved, which is
+  what this replaced. Don't reintroduce `draggable` — one path covers mouse, pen
+  and touch.
+  - **The opening move differs by input, and has to.** A mouse that is moving is
+    not also scrolling, so `SLOP` px of travel means "drag". A finger usually
+    *is* scrolling, so a drag is asked for with a press and hold (`HOLD_MS`), and
+    a finger that slides before the hold elapses is left alone. `mouseSlop:false`
+    opts a mouse out of the threshold where a plain click is already meaningful —
+    the calendar, where clicking blocks out an hour.
+  - **`touchmove` is cancelled once a hold is granted.** A pointer listener
+    cannot stop a scroll; only a non-passive touch listener can.
+  - **The drop target is resolved from the pointer** (`dropUnder` →
+    `elementsFromPoint`), since there are no dragover events to hang it on.
+    Each kind of drag reads **its own attribute** — `data-rowdrag` for rows,
+    `data-catdrag` for sections — or a section dropped on another section's body
+    finds one of the task rows sitting on top of it and goes nowhere.
+  - **The thing under the pointer is our own floating clone** (`makeDragImage`),
+    positioned `fixed` and moved by hand. It must be parked *inside* the `.fw`
+    root or it falls outside every theme-scoped rule and renders in the wrong
+    palette — and because the text-size setting puts a `zoom` on that root, which
+    scales what top/left mean for a fixed child, the pointer position is divided
+    by it.
+  - **The click that follows a drag is swallowed.** A press that never moved
+    still ends in a click, and a click on a queue row completes the task — so
+    holding one to pick it up and putting it back down ticked it off.
+  - `moveTask` and `moveCat` both no-op on an id of the wrong kind, which is what
+    makes a cross-type drop harmless rather than something the drag has to
+    prevent.
   - a `dragover-before`/`dragover-after` insertion line on the hovered row,
     picked to match where the move actually lands (below when moving down,
     above when moving up).
@@ -252,18 +268,30 @@ are deliberately not built yet.
 - **`CalendarDay` is the one column implementation**, shared by both: the week
   view renders seven, the panel renders one. Same hour bars, same now line, same
   event and plan geometry (`placeIn`, `CAL_HOURS`), so the two can't drift apart.
-  The panel passes `compact` to drop the category label, and omits the `drag`
-  and delete handlers to make itself read-only.
+  The panel passes `compact` to drop the category label.
+- **The panel blocks out time too**, with its own `useCalDrag` and its own
+  `naming` state. It used to be read-only, which was a choice rather than a
+  limit — and the wrong half of one, since the panel is what is open while the
+  day is actually being planned. Its naming row is separate (`.calnamebar`,
+  stacked) because the panel is 220–480px wide and the week view's one-line row
+  does not fit in that.
 - **The grid is dragged, not just clicked** (`useCalDrag`, above `CalendarDay`).
   One gesture at a time: drag empty space to size a new event, drag an event to
   move it to another time or day, drag either edge (`.calresize`) to change its
   length. Everything snaps to `CAL_SNAP` (15 minutes). Points that matter:
-  - **The window listeners are attached inside the mousedown**, not by an effect
-    keyed on the gesture. A passive effect runs after the commit that starts the
-    drag, and everything the mouse does in that gap is lost — a quick click
-    releases before the mouseup listener exists and never opens the naming row at
-    all. They go on `window` rather than the column so a pointer that outruns the
-    grid keeps the drag, the same reasoning as the panel resize handles.
+  - It runs on `beginPointerDrag` like the row drags, so it works with a finger.
+    **A mouse still begins on the press** (`mouseSlop: false`) because a plain
+    click here means something — it blocks out an hour — while a finger has to
+    press and hold, or scrolling the week would scrawl events across it. The
+    gesture is only `put` once the hold is granted; until then there is nothing
+    to draw.
+  - **The window listeners are attached inside the pointerdown**, not by an
+    effect keyed on the gesture. A passive effect runs after the commit that
+    starts the drag, and everything the pointer does in that gap is lost — a
+    quick click releases before the release listener exists and never opens the
+    naming row at all. They go on `window` rather than the column so a pointer
+    that outruns the grid keeps the drag, the same reasoning as the panel resize
+    handles.
   - **The mouseup position is applied, not just the last mousemove.** A fast drag
     whose final mousemove lagged the release otherwise lands short of where it
     was let go; `advance()` is shared by both handlers so they can't disagree.
@@ -1367,9 +1395,22 @@ already sat behind a seam that feature-detects its bridge.
 - **The `<title>` is written for a search result, so the Electron window can't
   use it** — `main.cjs` pins its own title and preventDefaults
   `page-title-updated`, or the desktop app's title bar reads like a listing.
-- **Desktop browsers only, for now.** The calendar's drag-to-create is
-  mouse-events only and the side panels assume a wide window; a phone pass is a
-  separate change, not something to half-do inside another one.
+- **It is used on iPads, so touch is not hypothetical.** Dragging is pointer
+  events (see "Categories"), and two CSS rules matter as much as the JavaScript:
+  a long press is how a drag is asked for, and iOS answers one by selecting the
+  text under it and raising the magnifier unless `-webkit-touch-callout` and
+  `user-select` are off — which is exactly what a dragged task looked like on an
+  iPad. Inputs opt back in, or you cannot put the caret in the middle of what you
+  typed.
+- **`@media (hover: none)` is the last block in `CSS`, deliberately.** There is
+  no hover on a touch screen, so every control that only appears on one — the
+  delete and edit buttons, the section grip, the calendar's resize strips — is
+  simply not there. It sits last because the base rule hiding `.xbtn` is declared
+  much further up, and in one flat sheet a matching rule declared later wins: put
+  this block anywhere earlier and it quietly does nothing.
+- **Phone widths are still not designed for.** The layout holds down to about
+  820px (an iPad in portrait) with no horizontal scroll, but the side panels
+  assume a wide window; a phone pass is a separate change.
 
 ## Settings
 

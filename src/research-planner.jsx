@@ -350,6 +350,17 @@ const CSS = `
 }
 .field:focus{outline:2px solid var(--pine-soft); border-color:var(--pine);}
 .mono{font-family:var(--font-mono);}
+
+/* ---------- touch ----------
+   A drag is asked for with a press and hold, and iOS answers a long press by
+   selecting the text under it and raising the magnifier — which is exactly what
+   a dragged task looked like on an iPad. Inputs opt back in, or you cannot put
+   the caret in the middle of what you typed. */
+.taskrow, .qrow, .cathead, .calslots, .subtaskrow{
+  -webkit-touch-callout:none; -webkit-user-select:none; user-select:none;
+}
+.fw input, .fw textarea, .fw select{-webkit-user-select:auto; user-select:auto;}
+
 .xbtn{border:none; background:none; color:var(--muted); font-size:15px; padding:2px 6px; border-radius:6px; opacity:0; transition:opacity .12s;}
 .xbtn:hover{color:var(--tomato); background:var(--tomato-soft);}
 tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .xbtn, .subtaskrow:hover .xbtn{opacity:1;}
@@ -398,8 +409,7 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .catblock{margin-top:18px;}
 .catblock.dragging{opacity:.4;}
 .cathead{display:flex; align-items:center; gap:8px; margin-bottom:8px;}
-.cathead[draggable]{cursor:grab;}
-.cathead[draggable]:active{cursor:grabbing;}
+
 .catgrip{color:var(--line); font-size:13px; letter-spacing:-2px; user-select:none;}
 .cathead:hover .catgrip{color:var(--muted);}
 .catdot{width:9px; height:9px; border-radius:50%;}
@@ -472,8 +482,10 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 }
 /* rows are drag handles for reordering; the cursor is the only affordance,
    since a grip on every row would be a lot of furniture */
-.taskrow[draggable="true"], .qrow[draggable="true"]{cursor:grab;}
-.taskrow[draggable="true"]:active, .qrow[draggable="true"]:active{cursor:grabbing;}
+.taskrow[data-rowdrag], .qrow[data-rowdrag]{cursor:grab;}
+.taskrow[data-rowdrag]:active, .qrow[data-rowdrag]:active{cursor:grabbing;}
+.cathead[data-catdrag]{cursor:grab;}
+.cathead[data-catdrag]:active{cursor:grabbing;}
 /* the row left behind while its snapshot follows the cursor */
 .taskrow.dragging, .qrow.dragging{opacity:.28;}
 /* insertion line on the edge the row will actually land on */
@@ -930,6 +942,15 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
   cursor:col-resize; background:transparent; border:none; padding:0;
 }
 .calgrip:hover, .calgrip.dragging{background:var(--pine); opacity:.5;}
+/* the panel is too narrow for the week view's one-line naming row, so its
+   fields stack instead of being squeezed side by side */
+.calnamebar{
+  display:flex; flex-direction:column; gap:8px; padding:10px 12px;
+  border-top:1px solid var(--line); background:var(--card);
+}
+.calnamebar .field{width:100%;}
+.calnamebtns{display:flex; gap:6px;}
+.calnamebtns .btn{flex:1;}
 .calpanelscroll{flex:1; overflow-y:auto; padding:0 10px 14px;}
 .calpanelday{display:flex;}
 .calpanelday .calday{flex:1; min-width:0; border-left:1px solid var(--line-soft);}
@@ -995,6 +1016,15 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 }
 @media (prefers-reduced-motion: reduce){
   .fw *{animation:none !important; transition:none !important;}
+}
+/* Last in the sheet on purpose. There is no hover on a touch screen, so every
+   control that only appears on one is simply not there — and these are how a
+   thing gets edited, deleted or resized. The base rule hiding .xbtn is declared
+   further up, so anything earlier than this would quietly lose to it. */
+@media (hover: none){
+  .xbtn{opacity:.6;}
+  .catgrip{color:var(--muted);}
+  .calevent .calresize{background:rgba(255,255,255,.3);}
 }
 `;
 
@@ -1749,7 +1779,7 @@ export default function LordOfMyLife() {
         <SettingsPanel data={data} setData={setData} theme={theme} onClose={() => setSettingsOpen(false)} />
       )}
       {calOpen && view !== "calendar" && (
-        <CalendarPanel data={data} events={allEvents} now={now} plan={plan} setWidth={setCalWidth}
+        <CalendarPanel data={data} setData={setData} events={allEvents} now={now} plan={plan} setWidth={setCalWidth}
           onClose={() => setCalOpen(false)} />
       )}
       <main className="wrap">
@@ -2668,25 +2698,120 @@ function makeDragImage(el) {
   return clone;
 }
 
-/* Shared by TaskRow and QueueRow. */
+/* ---- dragging, on a mouse or a finger ----
+   This used to be HTML5 drag-and-drop, which **iOS does not implement at all**:
+   on an iPad a press-and-drag on a task selected its text and the row never
+   moved. Pointer events cover mouse, pen and touch in one path, so there is one
+   implementation rather than a desktop one and a broken one.
+
+   The opening move has to differ, though. A mouse that is moving is not also
+   scrolling, so a small movement can mean "drag". A finger that is moving
+   usually *is* scrolling, so a drag has to be asked for: press and hold, and a
+   finger that slides before the hold elapses is left alone to scroll. That is
+   also why `touchmove` is cancelled once a hold has been granted — a pointer
+   listener cannot stop a scroll, only a non-passive touch listener can. */
+const HOLD_MS = 350;
+const SLOP = 8;
+
+function beginPointerDrag(e, { onBegin, onMove, onEnd, mouseSlop = true }) {
+  const touch = e.pointerType !== "mouse";
+  const x0 = e.clientX, y0 = e.clientY;
+  let started = false, hold = null;
+  const far = (ev) => Math.hypot(ev.clientX - x0, ev.clientY - y0) > SLOP;
+  const block = (ev) => ev.preventDefault();
+
+  const start = (ev) => {
+    started = true;
+    window.addEventListener("touchmove", block, { passive: false });
+    onBegin(ev);
+  };
+  const move = (ev) => {
+    if (!started) {
+      // before the hold, a finger that travels was scrolling; let it
+      if (touch) { if (far(ev)) stop(null); return; }
+      if (mouseSlop && !far(ev)) return;
+      start(ev);
+    }
+    onMove(ev);
+  };
+  const stop = (ev) => {
+    clearTimeout(hold);
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", stop);
+    window.removeEventListener("pointercancel", stop);
+    window.removeEventListener("touchmove", block);
+    if (started) onEnd(ev);
+  };
+
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", stop);
+  window.addEventListener("pointercancel", stop);
+  if (touch) hold = setTimeout(() => start(e), HOLD_MS);
+  else if (!mouseSlop) start(e);
+}
+
+/* Whichever target the pointer is actually over, which is how a drop is found
+   now that there are no dragover events to hang it on. Each kind of drag reads
+   its own attribute: a section dropped onto another section's *body* would
+   otherwise find one of the task rows sitting on top of it and go nowhere. */
+const dropUnder = (ev, attr) => {
+  const hit = document.elementsFromPoint(ev.clientX, ev.clientY).find((n) => n.dataset?.[attr]);
+  return hit ? hit.dataset[attr] : null;
+};
+
+/* Shared by TaskRow, QueueRow and the section headers. The element carries its
+   own id, so one attribute marks both what can be picked up and what can be
+   dropped on. */
 function dragHandlers(drag) {
   if (!drag) return {};
+  const attr = drag.attr || "rowdrag";
   return {
-    draggable: true,
-    onDragStart: (e) => {
-      e.dataTransfer.effectAllowed = "move";
-      const r = e.currentTarget.getBoundingClientRect();
-      try {
-        const ghost = makeDragImage(e.currentTarget);
-        e.dataTransfer.setDragImage(ghost, e.clientX - r.left, e.clientY - r.top);
-        setTimeout(() => ghost.remove(), 0);
-      } catch (err) { /* older engines fall back to the default drag image */ }
-      drag.onStart();
+    [`data-${attr}`]: drag.id,
+    onPointerDown: (e) => {
+      // a press on a control belongs to that control, not to the row under it
+      if (e.button !== 0 || e.target.closest("button, input, select, textarea, a, label")) return;
+      const row = e.currentTarget;
+      let ghost = null, offX = 0, offY = 0, move = () => {};
+      const target = (ev) => {
+        const id = dropUnder(ev, attr);
+        return id && id !== drag.id ? id : null;
+      };
+      beginPointerDrag(e, {
+        onBegin: (ev) => {
+          const r = row.getBoundingClientRect();
+          offX = ev.clientX - r.left; offY = ev.clientY - r.top;
+          /* The ghost is parked inside the themed root, and the text-size
+             setting puts a `zoom` on it — which scales what `top`/`left` mean
+             for a fixed child, while the pointer is reported unscaled. */
+          const z = parseFloat(getComputedStyle(row.closest(".fw") || document.body).zoom) || 1;
+          const place = (x, y) => { ghost.style.left = `${x / z}px`; ghost.style.top = `${y / z}px`; };
+          move = place;
+          /* Cloned before the row fades, so the thing under the finger is the
+             row as it looked when it was picked up. */
+          ghost = makeDragImage(row);
+          ghost.style.position = "fixed";
+          ghost.style.zIndex = "70";
+          place(ev.clientX - offX, ev.clientY - offY);
+          drag.onStart();
+        },
+        onMove: (ev) => {
+          if (ghost) move(ev.clientX - offX, ev.clientY - offY);
+          drag.onOver(target(ev));
+        },
+        onEnd: (ev) => {
+          ghost?.remove();
+          ghost = null;
+          drag.onDrop(ev ? target(ev) : null);
+          /* A press that never moved still ends in a click, and on a queue row a
+             click completes the task — so holding one to pick it up and putting
+             it back down would tick it off. Swallow the click this gesture is
+             about to produce, and only that one. */
+          const swallow = (ce) => { ce.preventDefault(); ce.stopPropagation(); };
+          window.addEventListener("click", swallow, { capture: true, once: true });
+          setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 500);
+        },
+      });
     },
-    onDragEnd: drag.onEnd,
-    onDragOver: (e) => { e.preventDefault(); drag.onOver(); },
-    onDragLeave: drag.onLeave,
-    onDrop: (e) => { e.preventDefault(); drag.onDrop(); },
   };
 }
 
@@ -3170,32 +3295,32 @@ function useCalDrag(setData, onCreated) {
   };
   const same = (a, b) => a.dayKey === b.dayKey && a.startMin === b.startMin && a.endMin === b.endMin;
 
-  /* The listeners are attached here, in the mousedown itself, rather than by an
-     effect keyed on the gesture. An effect runs after the commit that starts the
-     drag, and everything the mouse does in that gap is lost — a quick click
-     releases before the mouseup listener exists and never opens the naming row
-     at all. They live on window, not the grid, so a pointer that outruns the
-     column keeps the drag. */
-  const detach = useRef(null);
-  useEffect(() => () => detach.current?.(), []);
+  /* The listeners are attached here, in the pointerdown itself, rather than by
+     an effect keyed on the gesture. An effect runs after the commit that starts
+     the drag, and everything the pointer does in that gap is lost — a quick
+     click releases before the release listener exists and never opens the
+     naming row at all. They live on window, not the grid, so a pointer that
+     outruns the column keeps the drag.
 
-  const begin = (g) => {
-    put(g);
-    const move = (e) => {
-      const cur = ref.current, p = pointAt(e);
+     `mouseSlop: false` because a plain click on the grid is meaningful here: it
+     blocks out an hour. A finger still has to press and hold, so that scrolling
+     the week doesn't scrawl events across it. The gesture is only `put` once
+     that hold is granted — until then there is nothing to draw. */
+  const begin = (g, e) => {
+    const move = (e2) => {
+      const cur = ref.current, p = pointAt(e2);
       if (!cur || !p) return;
       const next = advance(cur, p);
-      // a mousemove that lands in the same quarter hour is not a change; without
-      // this the whole app re-renders on every pixel of the drag
+      // a move that lands in the same quarter hour is not a change; without this
+      // the whole app re-renders on every pixel of the drag
       if (same(next, cur)) return;
       put({ ...next, moved: true });
     };
-    const up = (e) => {
-      detach.current?.();
+    const up = (e2) => {
       let cur = ref.current;
       put(null);
       if (!cur) return;
-      const p = pointAt(e);
+      const p = e2 && pointAt(e2);
       if (p) {
         const next = advance(cur, p);
         cur = { ...next, moved: cur.moved || !same(next, cur) };
@@ -3214,13 +3339,7 @@ function useCalDrag(setData, onCreated) {
         }));
       }
     };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
-    detach.current = () => {
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
-      detach.current = null;
-    };
+    beginPointerDrag(e, { mouseSlop: false, onBegin: () => put(g), onMove: move, onEnd: up });
   };
 
   return {
@@ -3230,19 +3349,17 @@ function useCalDrag(setData, onCreated) {
       if (e.button !== 0) return;
       const p = pointAt(e);
       if (!p) return;
-      e.preventDefault(); // otherwise the drag selects text across the grid
       const anchor = snapMin(p.mins);
-      begin({ kind: "create", dayKey, anchor, startMin: anchor, endMin: anchor + CAL_SNAP, moved: false });
+      begin({ kind: "create", dayKey, anchor, startMin: anchor, endMin: anchor + CAL_SNAP, moved: false }, e);
     },
     // an existing event: move it, or take one of its edges
     onEventDown: (ev, kind, e) => {
       if (e.button !== 0) return;
       const p = pointAt(e);
       if (!p) return;
-      e.preventDefault();
       e.stopPropagation();
       const startMin = timeToMin(ev.start), endMin = timeToMin(ev.end);
-      begin({ kind, id: ev.id, dayKey: ev.date, startMin, endMin, grab: p.mins - startMin, moved: false });
+      begin({ kind, id: ev.id, dayKey: ev.date, startMin, endMin, grab: p.mins - startMin, moved: false }, e);
     },
   };
 }
@@ -3262,7 +3379,7 @@ function CalendarDay({ day, data, events, plan, now, onDelEvent, compact, drag, 
   const collides = (a, b) => evSpans.some(([s, e]) => s < b && e > a);
 
   return (
-    <div className="calslots" data-day={key} onMouseDown={drag && ((e) => drag.onDown(key, e))}>
+    <div className="calslots" data-day={key} onPointerDown={drag && ((e) => drag.onDown(key, e))}>
       {CAL_HOURS.slice(0, -1).map((h) => <div key={h} className="calslot" />)}
 
       {dayPlan.map((b, i) => {
@@ -3298,10 +3415,10 @@ function CalendarDay({ day, data, events, plan, now, onDelEvent, compact, drag, 
           <div key={ev.id} className={`calevent phaserow ${short ? "short" : ""} ${ev.source === "google" ? "fromgoogle" : ""} ${movable ? "movable" : ""} ${drag?.gesture?.id === ev.id ? "ghost" : ""}`}
             style={{ ...box, background: cat ? cat.color : ev.source === "google" ? "var(--teal)" : "var(--slate)" }}
             title={`${ev.title}${cat ? ` · ${cat.name}` : ""} — ${fmtHM(ev.start)}–${fmtHM(ev.end)}${ev.source === "google" ? " · from Google Calendar" : ""}${movable ? " · drag to move, edges to resize" : ""}`}
-            onMouseDown={movable ? ((e) => drag.onEventDown(ev, "move", e)) : undefined}
+            onPointerDown={movable ? ((e) => drag.onEventDown(ev, "move", e)) : undefined}
             onClick={(e) => e.stopPropagation()}>
-            {grips && <span className="calresize top" onMouseDown={(e) => drag.onEventDown(ev, "top", e)} />}
-            {grips && <span className="calresize bottom" onMouseDown={(e) => drag.onEventDown(ev, "bottom", e)} />}
+            {grips && <span className="calresize top" onPointerDown={(e) => drag.onEventDown(ev, "top", e)} />}
+            {grips && <span className="calresize bottom" onPointerDown={(e) => drag.onEventDown(ev, "bottom", e)} />}
             <span className="caleventtitle">{ev.title}</span>
             {/* A short block shows its length, not its span: "09:00-09:10" eats
                 two thirds of a day column and leaves four characters for the
@@ -3510,9 +3627,37 @@ function GoogleChip({ gcal }) {
   );
 }
 
-function CalendarPanel({ data, events, now, plan, setWidth, onClose }) {
+function CalendarPanel({ data, setData, events, now, plan, setWidth, onClose }) {
   const [dragging, setDragging] = useState(false);
   const scrollRef = useRef(null);
+  const titleRef = useRef(null);
+
+  /* The panel blocks out time the same way the week grid does — it is the same
+     column component, so making it read-only was a choice rather than a limit,
+     and a calendar you can only look at while planning the day is the wrong
+     half. Its own naming row, since the panel is far too narrow for the week
+     view's one. */
+  const [naming, setNaming] = useState(null);
+  const drag = useCalDrag(setData, (sel) => {
+    setNaming({ ...sel, title: "" });
+    setTimeout(() => titleRef.current?.focus(), 0);
+  });
+  const commitNaming = () => {
+    const title = naming?.title.trim();
+    if (!title) return;
+    const ev = { id: uid(), title, cat: "", date: naming.dayKey, start: minToTime(naming.startMin), end: minToTime(naming.endMin) };
+    setData((prev) => ({ ...prev, events: [...(prev.events || []), ev] }));
+    setNaming(null);
+  };
+  const delEvent = (id) => setData((prev) => ({ ...prev, events: (prev.events || []).filter((e) => e.id !== id) }));
+  const g = drag.gesture;
+  const draft = g?.kind === "create" ? { dayKey: g.dayKey, startMin: g.startMin, endMin: g.endMin } : naming;
+  // an event being dragged is drawn where the pointer has it, not where it's stored
+  const shown = useMemo(() => (
+    !g || g.kind === "create" ? events : events.map((e) => (e.id === g.id
+      ? { ...e, date: g.dayKey, start: minToTime(g.startMin), end: minToTime(g.endMin) }
+      : e))
+  ), [events, g]);
 
   // open with the current hour in view rather than at 7am
   useEffect(() => {
@@ -3544,10 +3689,26 @@ function CalendarPanel({ data, events, now, plan, setWidth, onClose }) {
         <div className="calpanelday">
           <CalHours />
           <div className="calday">
-            <CalendarDay day={now} data={data} events={events} plan={plan} now={now} compact />
+            <CalendarDay day={now} data={data} events={shown} plan={plan} now={now} compact
+              drag={drag} draft={draft} onDelEvent={delEvent} />
           </div>
         </div>
       </div>
+      {naming && (
+        <div className="calnamebar">
+          <span className="caldraftwhen">{fmtMin(naming.startMin)}–{fmtMin(naming.endMin)}</span>
+          <input className="field" ref={titleRef} placeholder="Name this event" value={naming.title}
+            onChange={(e) => setNaming({ ...naming, title: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitNaming();
+              if (e.key === "Escape") setNaming(null);
+            }} />
+          <div className="calnamebtns">
+            <button className="btn primary" disabled={!naming.title.trim()} onClick={commitNaming}>Add</button>
+            <button className="btn ghost" onClick={() => setNaming(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }
@@ -3584,17 +3745,18 @@ function TaskGroupView({ data, setData, now, group, title, sessionEmoji }) {
     return ids.indexOf(fromId) < ids.indexOf(targetId) ? "dragover-after" : "dragover-before";
   };
   const endTaskDrag = () => { taskDragRef.current = null; setTaskDragId(null); setOverId(null); };
+  /* `onOver`/`onDrop` are handed whichever row the pointer is over — the drag
+     no longer rides on dragover events fired at each row, it resolves the
+     target itself. The fade can be set straight away now that the ghost is a
+     clone taken before it rather than a snapshot the browser takes for us. */
   const taskDrag = (id) => ({
+    id,
     dragging: taskDragId === id,
     over: overClass(id),
-    // The fade is deferred a tick so it isn't captured in the drag snapshot. The
-    // ref guard matters: a drag that ends within that tick would otherwise have
-    // the timeout re-apply `dragging` after cleanup and strand a faded row.
-    onStart: () => { taskDragRef.current = id; setTimeout(() => { if (taskDragRef.current === id) setTaskDragId(id); }, 0); },
+    onStart: () => { taskDragRef.current = id; setTaskDragId(id); },
     onEnd: endTaskDrag,
-    onOver: () => setOverId((o) => (o === id ? o : id)),
-    onLeave: () => setOverId((o) => (o === id ? null : o)),
-    onDrop: () => { moveTask(taskDragRef.current, id); endTaskDrag(); },
+    onOver: (tid) => setOverId((o) => (o === tid ? o : tid)),
+    onDrop: (tid) => { if (tid) moveTask(taskDragRef.current, tid); endTaskDrag(); },
   });
 
   const cats = catsIn(data, group);
@@ -3691,6 +3853,16 @@ function TaskGroupView({ data, setData, now, group, title, sessionEmoji }) {
     });
   };
 
+  const endCatDrag = () => { dragRef.current = null; setDragId(null); };
+  const catDrag = (id) => ({
+    id,
+    attr: "catdrag",
+    onStart: () => { dragRef.current = id; setDragId(id); },
+    onEnd: endCatDrag,
+    onOver: () => {}, // a section shows no insertion line; the block's own fade is the cue
+    onDrop: (tid) => { if (tid) moveCat(dragRef.current, tid); endCatDrag(); },
+  });
+
   const doneCt = tasks.filter((t) => t.checked).length;
 
   return (
@@ -3704,15 +3876,13 @@ function TaskGroupView({ data, setData, now, group, title, sessionEmoji }) {
 
       {cats.map((c) => {
         const list = tasks.filter((t) => t.cat === c.id);
+        // data-catdrag on the whole block so a section can be dropped anywhere
+        // on it, while only the header picks one up
         return (
-          <div className={`catblock ${dragId === c.id ? "dragging" : ""}`} key={c.id}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => { e.preventDefault(); moveCat(dragRef.current, c.id); dragRef.current = null; setDragId(null); }}>
+          <div className={`catblock ${dragId === c.id ? "dragging" : ""}`} key={c.id} data-catdrag={c.id}>
             {/* only the header is the drag handle — making the whole block draggable
                 would fight with selecting text in the add-task inputs inside it */}
-            <div className="cathead phaserow" draggable
-              onDragStart={(e) => { dragRef.current = c.id; setDragId(c.id); e.dataTransfer.effectAllowed = "move"; }}
-              onDragEnd={() => { dragRef.current = null; setDragId(null); }}
+            <div className="cathead phaserow" {...dragHandlers(catDrag(c.id))}
               title="Drag to reorder this section">
               <span className="catgrip">⠿</span>
               <span className="catdot" style={{ background: c.color }} />
@@ -4982,15 +5152,15 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
 
   const endQDrag = () => { qDragRef.current = null; setQDragId(null); setQOverId(null); };
   const qDrag = (id) => ({
+    id,
     dragging: qDragId === id,
     over: qOverId === id && qDragRef.current && qDragRef.current !== id
       ? (queueIds.indexOf(qDragRef.current) < queueIds.indexOf(id) ? "dragover-after" : "dragover-before")
       : "",
-    onStart: () => { qDragRef.current = id; setTimeout(() => { if (qDragRef.current === id) setQDragId(id); }, 0); },
+    onStart: () => { qDragRef.current = id; setQDragId(id); },
     onEnd: endQDrag,
-    onOver: () => setQOverId((o) => (o === id ? o : id)),
-    onLeave: () => setQOverId((o) => (o === id ? null : o)),
-    onDrop: () => { moveInQueue(qDragRef.current, id); endQDrag(); },
+    onOver: (tid) => setQOverId((o) => (o === tid ? o : tid)),
+    onDrop: (tid) => { if (tid) moveInQueue(qDragRef.current, tid); endQDrag(); },
   });
   const completeTask = (q) => {
     if (q.sub) toggleSubtask(data, setData, q.task.id, q.sub.id, setBurst);

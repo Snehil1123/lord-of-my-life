@@ -119,8 +119,9 @@ It differs from the desktop app in three ways, all of them deliberate:
   and reinstalling; here it costs a reload, so it just happens — and never while
   you're in the middle of typing.
 
-Desktop browsers for now; a phone will load it, but the layout and the calendar's
-drag-to-create both assume a mouse and a wide window.
+Works on an iPad: dragging a task, reordering a section and blocking out time on
+the calendar are all press-and-hold, so an ordinary swipe still scrolls. Phones
+will load it, but the layout still assumes a window at least tablet-width.
 
 ## Releasing
 
