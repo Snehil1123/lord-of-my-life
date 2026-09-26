@@ -170,7 +170,10 @@ const send = (channel, payload) => {
 };
 
 ipcMain.handle("update:check", async () => {
-  const git = await updater.check({ appPath: app.getAppPath() });
+  // the rebuild is a PowerShell script, so a checkout only updates itself on Windows
+  const git = process.platform === "win32"
+    ? await updater.check({ appPath: app.getAppPath() })
+    : { ok: false, reason: "Checkout updates are Windows-only." };
   if (git.ok) return { kind: "git", ...git };
   if (!app.isPackaged) return { kind: "none", ok: false, reason: git.reason };
   try {
@@ -183,12 +186,20 @@ ipcMain.handle("update:check", async () => {
       return { kind: "app", ok: true, behind: 0, version: app.getVersion() };
     }
     return { kind: "app", ok: true, behind: 1, version, current: app.getVersion(),
-             subject: `Version ${version} is available.` };
+             subject: `Version ${version} is available.`, manual: MANUAL_UPDATE };
   } catch (e) {
     // no network, no release yet, or a malformed feed — say nothing rather than nag
     return { kind: "app", ok: false, reason: e.message };
   }
 });
+
+/* The Mac build is ad-hoc signed, not signed by an Apple developer, and macOS
+   refuses to install an update onto an app it can't match a signature for. The
+   feed still says a new version exists, so the pill offers the download page
+   rather than a restart that would fail. */
+const MANUAL_UPDATE = process.platform === "darwin";
+const RELEASES = "https://github.com/Snehil1123/lord-of-my-life/releases/latest";
+ipcMain.handle("update:open", () => shell.openExternal(RELEASES));
 
 /* Quit only once the helper is actually running, and a beat later so the reply
    reaches the renderer first. The helper waits on this pid, so quitting before

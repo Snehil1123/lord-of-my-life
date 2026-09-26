@@ -6,7 +6,7 @@ import {
 } from "./sync.js";
 import { agentAvailable, onToolCall, onEvent, runQuery, cancelQuery } from "./ai.js";
 import { calAvailable, calConfigured, calStatus, calConnect, calDisconnect, calFetch } from "./gcal.js";
-import { updaterAvailable, checkForUpdate, runUpdate, downloadUpdate, installUpdate, onUpdateProgress } from "./update.js";
+import { updaterAvailable, checkForUpdate, runUpdate, downloadUpdate, installUpdate, onUpdateProgress, openDownloadPage } from "./update.js";
 
 /* ============================================================
    LORD OF MY LIFE — one planner for the whole research pipeline
@@ -1903,6 +1903,7 @@ function UpdatePill() {
      is gone in half a second. An installed copy has to fetch a 160MB installer
      first, so it reports progress and only then restarts. */
   const start = async () => {
+    if (state.manual) { openDownloadPage(); setOpen(false); return; }
     setBusy(true);
     if (state.kind === "git") {
       const res = await runUpdate();
@@ -1941,7 +1942,9 @@ function UpdatePill() {
             </div>
           ) : (
             <div className="updnote">
-              {state.kind === "app"
+              {state.manual
+                ? `You're on ${state.current}. Download the new version and drag it into Applications, replacing this one. Your planner data stays where it is.`
+                : state.kind === "app"
                 ? `You're on ${state.current}. The update downloads in the background, then the app restarts to install it.`
                 : "The app will close, rebuild itself in a terminal window, and reopen. Takes a minute or so."}
             </div>
@@ -1950,7 +1953,8 @@ function UpdatePill() {
           <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
             <button className="btn primary" style={{ marginLeft: "auto" }}
               disabled={blocked || busy} onClick={start}>
-              {!busy ? "Update & restart"
+              {state.manual ? "Download"
+                : !busy ? "Update & restart"
                 : state.kind === "app" ? (pct > 0 && pct < 100 ? `Downloading ${pct}%` : "Downloading…")
                 : "Updating…"}
             </button>

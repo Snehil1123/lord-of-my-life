@@ -50,6 +50,14 @@
     "win": {
       "target": "nsis"
     },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.productivity",
+      "icon": "public/icon-512.png",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "artifactName": "LordOfMyLife-${version}-mac-${arch}.${ext}"
+    },
     "publish": [
       {
         "provider": "github",

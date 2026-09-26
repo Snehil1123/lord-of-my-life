@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld("lolUpdate", {
   run: () => ipcRenderer.invoke("update:run"),          // checkout: pull and rebuild
   download: () => ipcRenderer.invoke("update:download"), // installed: fetch the installer
   install: () => ipcRenderer.invoke("update:install"),   // installed: restart into it
+  open: () => ipcRenderer.invoke("update:open"),         // Mac: the release page
   onProgress: (cb) => {
     const handler = (_e, pct) => cb(pct);
     ipcRenderer.on("update:progress", handler);

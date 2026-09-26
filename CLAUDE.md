@@ -1208,6 +1208,33 @@ surface the renderer gets is [electron/preload.cjs](electron/preload.cjs) (see "
   project directory) is running while you `electron-builder` package the app,
   the file watcher can hold a handle inside `release/win-unpacked.tmp` and
   the final rename fails with `EPERM`. Stop the dev server before packaging.
+- **There is a Mac build too, Apple Silicon only.** The `mac` job in
+  `release.yml` builds it on a `macos-latest` runner, since the Agent SDK's
+  runtime is installed per platform *and* per chip and can't be cross-built from
+  Windows. Intel would be a second runner (`macos-13`, `--x64`). A separate
+  `publish` job creates the one release and attaches both platforms' files —
+  each build creating it would race, the same bug the Windows publisher had. A
+  manual run on a branch builds both and publishes nothing; the files are the
+  run's artifacts.
+  - **It is ad-hoc signed** (`mac.identity: "-"`), not Developer ID signed. Apple
+    Silicon won't run unsigned code, and a download whose signature is broken is
+    reported as "damaged" with no way past it; an ad-hoc one gets "Open Anyway"
+    in Privacy & Security. `hardenedRuntime` is off because with it on, library
+    validation rejects Electron's framework under an ad-hoc signature. Signing
+    for real needs the $99/yr Apple Developer Program, a Developer ID
+    certificate, notarization, and hardened runtime back on.
+  - **Mac can't install its own updates** while it's ad-hoc signed — macOS
+    refuses an update it can't match to a signature. The feed
+    (`latest-mac.yml`, pointing at the `.zip`) is still published, so
+    `update:check` knows a version exists; it returns `manual: true` on macOS
+    and the pill's button opens the release page instead of restarting. Drop
+    `MANUAL_UPDATE` in `main.cjs` once the build is properly signed.
+  - The git-checkout update path is Windows-only (it is a PowerShell script), so
+    `update:check` skips it on other platforms, as does `npm run app:install`.
+  - The workflow's Verify step runs `codesign --verify` and executes the bundled
+    `claude` binary from where the packaged app spawns it. CI has no screen, so
+    that is the only launch test a build gets before
+    someone downloads it.
 
 ## In-app update
 

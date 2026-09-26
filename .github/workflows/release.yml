@@ -1,10 +1,13 @@
 name: Release
 
-# Pushing a version tag builds the Windows installer and publishes it to
-# GitHub Releases, so https://github.com/Snehil1123/lord-of-my-life/releases
-# always has the latest download.
+# Pushing a version tag builds the Windows and Mac installers and publishes both
+# to one GitHub Release, so https://github.com/Snehil1123/lord-of-my-life/releases
+# always has the latest downloads.
 #
 #   git tag v0.2.0 && git push origin v0.2.0
+#
+# Running it by hand from the Actions tab on a branch builds both installers
+# without publishing anything; they're downloadable from the run's Artifacts.
 #
 # Needs repo secrets (Settings → Secrets and variables → Actions):
 #   VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY   — sign-in and shared rooms
@@ -15,10 +18,10 @@ name: Release
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch: # lets you re-run a build by hand from the Actions tab
+  workflow_dispatch:
 
 permissions:
-  contents: write # electron-builder needs this to create the release
+  contents: write # the publish job creates the release
 
 jobs:
   windows:
@@ -87,8 +90,8 @@ jobs:
               -c.win.azureSignOptions.codeSigningAccountName="$SIGN_ACCOUNT" \
               -c.win.azureSignOptions.certificateProfileName="$SIGN_PROFILE" \
               -c.win.azureSignOptions.publisherName="$SIGN_PUBLISHER"
-            cat > notes.md <<'EOF'
-          Windows installer. Download the .exe below and run it.
+            cat > notes-win.md <<'EOF'
+          Download the .exe below and run it.
 
           Already have it installed? You don't need this page — the app offers the
           update to you directly.
@@ -99,8 +102,8 @@ jobs:
             # skipping the check. Signed builds keep the verification.
             echo "No AZURE_SIGN_* secrets set — building unsigned."
             npx electron-builder --win --publish never -c.win.verifyUpdateCodeSignature=false
-            cat > notes.md <<'EOF'
-          Windows installer. Download the .exe below and run it.
+            cat > notes-win.md <<'EOF'
+          Download the .exe below and run it.
 
           **You should only need this page once.** From this version on, the app
           checks for updates itself and offers them in the header — downloading a
@@ -117,22 +120,130 @@ jobs:
           EOF
           fi
 
-      # Publishing by hand rather than with electron-builder's own publisher:
-      # that one creates the release as a *draft* by default (invisible to the
-      # people you share the link with) and raced with itself uploading multiple
-      # artifacts, ending up with two release objects for one tag. Creating the
-      # release explicitly is deterministic. latest.yml and the .blockmap go up
-      # too: they are the auto-update feed an installed copy reads.
-      - name: Publish to GitHub Releases
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
           # latest.yml is the feed electron-updater reads — without it an installed
           # copy can never discover a new version. The .blockmap lets it fetch only
           # the changed parts of a 160MB installer rather than all of it.
-          assets=$(ls release/*.exe release/*.exe.blockmap release/latest.yml)
+          path: |
+            release/*.exe
+            release/*.exe.blockmap
+            release/latest.yml
+            notes-win.md
+          if-no-files-found: error
+
+  # Apple Silicon only: the Agent SDK's runtime is installed per chip, so each
+  # architecture needs its own runner, and Intel Macs are a shrinking minority.
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
+
+      - name: Write .env.local
+        run: |
+          {
+            echo "VITE_SUPABASE_URL=${{ secrets.VITE_SUPABASE_URL }}"
+            echo "VITE_SUPABASE_ANON_KEY=${{ secrets.VITE_SUPABASE_ANON_KEY }}"
+            echo "VITE_GOOGLE_CLIENT_ID=${{ secrets.VITE_GOOGLE_CLIENT_ID }}"
+            echo "VITE_GOOGLE_CLIENT_SECRET=${{ secrets.VITE_GOOGLE_CLIENT_SECRET }}"
+          } > .env.local
+
+      - run: npm run build
+
+      # Ad-hoc signed, not Developer ID signed (mac.identity "-" in package.json).
+      # Apple Silicon won't launch code with no signature at all, and a download
+      # with a broken one is reported as "damaged" with no way past it; an ad-hoc
+      # one gets the "Open Anyway" button in Privacy & Security instead. Auto
+      # discovery is off so a runner's stray certificate can't be picked up.
+      - name: Package
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npx electron-builder --mac --arm64 --publish never
+
+      # Cheap proof the bundle is intact before anyone downloads it: the seal
+      # verifies, and the assistant's runtime — re-signed along with everything
+      # else — still executes from where the packaged app will spawn it.
+      - name: Verify
+        run: |
+          set -euo pipefail
+          app=$(ls -d release/mac-arm64/*.app)
+          codesign --verify --deep --strict --verbose=2 "$app"
+          bin="$app/Contents/Resources/app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude"
+          test -x "$bin"
+          "$bin" --version
+
+      - name: Release notes
+        run: |
+          cat > notes-mac.md <<'EOF'
+          ### Mac (Apple Silicon)
+
+          Download the `.dmg`, open it, and drag Lord of My Life into Applications.
+
+          This build isn't signed by an Apple developer account, so macOS stops it
+          the first time you open it. Click **Done**, then go to **System Settings ->
+          Privacy & Security**, scroll down to the message about Lord of My Life, and
+          click **Open Anyway**. You only need to do this once.
+
+          The app tells you when a new version is out, but on Mac it can't install
+          it itself: download the new `.dmg` and drag it into Applications again,
+          replacing the old one. Your planner data is kept.
+
+          Intel Macs aren't supported by this build.
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          # the .zip is what electron-updater's Mac feed (latest-mac.yml) points
+          # at; it is only read here to learn that a version exists
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.blockmap
+            release/latest-mac.yml
+            notes-mac.md
+          if-no-files-found: error
+
+  # One job creates the release and attaches everything. Each build publishing
+  # its own files would race to create the release, which is how one tag once
+  # ended up with two. Publishing by hand rather than with electron-builder's
+  # own publisher, which creates the release as a draft by default.
+  #
+  # A failed Mac build doesn't hold back Windows: the release goes out with
+  # whatever built, and a Mac rerun of the same tag adds its files afterwards.
+  publish:
+    needs: [windows, mac]
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') && (needs.windows.result == 'success' || needs.mac.result == 'success') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Publish to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd out
+          : > notes.md
+          [ -f notes-win.md ] && { echo "### Windows"; echo; cat notes-win.md; echo; } >> notes.md
+          [ -f notes-mac.md ] && cat notes-mac.md >> notes.md
+          assets=$(ls *.exe *.dmg *.zip *.blockmap latest*.yml 2>/dev/null || true)
           echo "Publishing:"; ls -lh $assets | awk '{print "  " $9 "  " $5}'
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" $assets --clobber

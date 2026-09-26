@@ -79,4 +79,6 @@ export const downloadUpdate = () =>
   bridge()?.download() ?? Promise.resolve({ downloaded: false, reason: "Desktop app only." });
 export const installUpdate = () =>
   bridge()?.install() ?? Promise.resolve({ started: false, reason: "Desktop app only." });
+// the Mac build can't install its own updates — see MANUAL_UPDATE in electron/main.cjs
+export const openDownloadPage = () => bridge()?.open() ?? Promise.resolve();
 export const onUpdateProgress = (cb) => bridge()?.onProgress(cb) ?? (() => {});
