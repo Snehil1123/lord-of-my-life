@@ -6,8 +6,13 @@ name: Release
 #
 #   git tag v0.2.0 && git push origin v0.2.0
 #
-# Running it by hand from the Actions tab on a branch builds both installers
-# without publishing anything; they're downloadable from the run's Artifacts.
+# It can also be run by hand from the Actions tab (Run workflow):
+#   - with a version, e.g. 0.7.0, it builds and publishes v0.7.0 itself,
+#     creating the tag — so releasing needs no tag push, which matters where
+#     tags can't be pushed. An existing release of that version gets its
+#     files replaced, which is also how a broken release is repaired.
+#   - with the version left empty it only builds; the installers are
+#     downloadable from the run's Artifacts and nothing is published.
 #
 # Needs repo secrets (Settings → Secrets and variables → Actions):
 #   VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY   — sign-in and shared rooms
@@ -19,9 +24,18 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, e.g. 0.7.0 (no v). Leave empty for a test build."
+        required: false
+        default: ""
 
 permissions:
   contents: write # the publish job creates the release
+
+env:
+  # vX.Y.Z when this run publishes, empty for a test build
+  RELEASE_TAG: ${{ inputs.version != '' && format('v{0}', inputs.version) || startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
 
 jobs:
   windows:
@@ -41,9 +55,11 @@ jobs:
       # The release version comes from the tag, so package.json never has to be
       # edited by hand. Skipped on a manual run, which just uses what's committed.
       - name: Set version from tag
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         shell: bash
-        run: npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Bad version: $RELEASE_TAG"; exit 1; }
+          npm version --no-git-tag-version --allow-same-version "${RELEASE_TAG#v}"
 
       - name: Write .env.local
         shell: bash
@@ -148,8 +164,10 @@ jobs:
       - run: npm ci
 
       - name: Set version from tag
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
+        if: env.RELEASE_TAG != ''
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Bad version: $RELEASE_TAG"; exit 1; }
+          npm version --no-git-tag-version --allow-same-version "${RELEASE_TAG#v}"
 
       - name: Write .env.local
         run: |
@@ -225,7 +243,7 @@ jobs:
   # whatever built, and a Mac rerun of the same tag adds its files afterwards.
   publish:
     needs: [windows, mac]
-    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') && (needs.windows.result == 'success' || needs.mac.result == 'success') }}
+    if: ${{ !cancelled() && (startsWith(github.ref, 'refs/tags/v') || inputs.version != '') && (needs.windows.result == 'success' || needs.mac.result == 'success') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -239,16 +257,22 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          shopt -s nullglob
           cd out
           : > notes.md
           [ -f notes-win.md ] && { echo "### Windows"; echo; cat notes-win.md; echo; } >> notes.md
           [ -f notes-mac.md ] && cat notes-mac.md >> notes.md
-          assets=$(ls *.exe *.dmg *.zip *.blockmap latest*.yml 2>/dev/null || true)
-          echo "Publishing:"; ls -lh $assets | awk '{print "  " $9 "  " $5}'
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" $assets --clobber
-            gh release edit "$GITHUB_REF_NAME" --notes-file notes.md
+          # each artifact keeps the paths it was uploaded with, so the installers
+          # arrive under release/ beside the notes, not next to them
+          assets=(release/*.exe release/*.dmg release/*.zip release/*.blockmap release/latest*.yml)
+          # a release with notes and no files is worse than a failed run
+          [ ${#assets[@]} -gt 0 ] || { echo "No installers found to publish."; exit 1; }
+          echo "Publishing:"; ls -lh "${assets[@]}" | awk '{print "  " $9 "  " $5}'
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            gh release edit "$RELEASE_TAG" --notes-file notes.md
           else
-            gh release create "$GITHUB_REF_NAME" $assets \
-              --title "$GITHUB_REF_NAME" --notes-file notes.md
+            # --target creates the tag at this commit when it doesn't exist yet
+            gh release create "$RELEASE_TAG" "${assets[@]}" --target "$GITHUB_SHA" \
+              --title "$RELEASE_TAG" --notes-file notes.md
           fi

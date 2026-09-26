@@ -1214,8 +1214,15 @@ surface the renderer gets is [electron/preload.cjs](electron/preload.cjs) (see "
   Windows. Intel would be a second runner (`macos-13`, `--x64`). A separate
   `publish` job creates the one release and attaches both platforms' files —
   each build creating it would race, the same bug the Windows publisher had. A
-  manual run on a branch builds both and publishes nothing; the files are the
-  run's artifacts.
+  manual run with the version left empty builds both and publishes nothing; the
+  files are the run's artifacts. A manual run **with** a version publishes that
+  release and creates its tag through the API (`gh release create --target`),
+  so a release never depends on being able to push a tag — cloud sessions
+  can't. Run against an existing version, it replaces that release's files.
+  - **Artifacts keep their upload paths**, so the installers arrive in the
+    publish job under `release/`, not beside the notes. `v0.6.0` shipped with
+    notes and no files because the publish step looked in the wrong folder and
+    treated finding nothing as success; it now fails instead.
   - **It is ad-hoc signed** (`mac.identity: "-"`), not Developer ID signed. Apple
     Silicon won't run unsigned code, and a download whose signature is broken is
     reported as "damaged" with no way past it; an ad-hoc one gets "Open Anyway"
