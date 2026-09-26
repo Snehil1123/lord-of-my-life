@@ -122,6 +122,7 @@ const CSS = `
 .fw[data-theme="fantasy"] .gaugesub,
 .fw[data-theme="fantasy"] .todaypomos,
 .fw[data-theme="fantasy"] .aitool{font-size:var(--fsz-mono);}
+.fw[data-theme="fantasy"] .creator{font-size:var(--fsz-mono);}
 .fw[data-theme="fantasy"] .archivetoggle{font-size:16px;}
 .fw[data-theme="fantasy"] .catname{font-size:16.5px;}
 .fw[data-theme="fantasy"] .tab{font-size:17.5px;}
@@ -333,6 +334,7 @@ const CSS = `
 /* ---------- shared ---------- */
 /* above .fscene, which is fixed at z-index 0 behind the content */
 .wrap{max-width:1060px; margin:0 auto; padding:26px 22px 80px; position:relative; z-index:1;}
+.creator{margin-top:48px; text-align:center; font-family:var(--font-mono); font-size:12px; color:var(--muted); letter-spacing:0.04em;}
 .h2{font-family:var(--font-display); font-weight:700; font-size:24px; letter-spacing:-0.02em;}
 .sub{color:var(--muted); font-size:14px; margin-top:2px;}
 .card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius);}
@@ -1789,6 +1791,7 @@ export default function LordOfMyLife() {
         {view === "session" && <SessionView data={data} setData={setData} sessionEmoji={sessionEmoji} now={now} timer={timer} taskTimer={taskTimer} session={session} plan={plan} />}
         {view === "personal" && <PersonalView data={data} setData={setData} now={now} sessionEmoji={sessionEmoji} />}
         {view === "budget" && <BudgetView data={data} setData={setData} now={now} />}
+        <footer className="creator">Created by Snehil Mathur</footer>
       </main>
       {aiOpen && (
         <AiPanel dataRef={dataRef} setData={setData} onClose={() => setAiOpen(false)}
