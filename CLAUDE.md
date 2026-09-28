@@ -115,7 +115,8 @@ data = {
                               phases: [{ id, name, start, end, done }] }] }],
   tasks: [{ id, title, cat, minutes, est, done, checked, oneOnOne, dueDate,
             recurring, seedKey, completedDate, subtasks?, sectionId? }],
-  budget: { monthlyIncome, categories: [{ id, name, type, budget?,
+  budget: { monthlyIncome, seededIncome,
+            categories: [{ id, name, type: "fixed" | "budget" | "income", budget?, color?,
               items: [{ id, name, amount, date }],
               presets?: [{ id, name, amount }] }] },
 }
@@ -517,6 +518,12 @@ looking for the old `.timerring` SVG, it was replaced by `.pomoprog`.
     the day's count.
   - The card is left standing at `00:00` rather than cleared, or a timer that ran
     out while you were on another tab would leave no trace that it had.
+  - **A subtask can be timed on its own** from the expanded list of a task
+    queued whole — the ⏱ on each open `SubtaskRow`, which only Session passes
+    (`onTimer`). `timeSubtask` resolves `taskId::subId` through `resolveQueued`
+    even though that id isn't in the queue, so the timer gets exactly the entry
+    shape a subtask queued on its own would: its length is the subtask's minutes
+    and finishing credits nothing.
 - `QueueRow` renders its subtask list as a **sibling** of `.qrow`, never a
   child: the row's own click completes the task, so nesting them would mean
   ticking a subtask also ticked off its parent. Its buttons stop propagation
@@ -829,8 +836,26 @@ every subtask is checked.
 
 ## Budget
 
-Two category `type`s, rendered by the same `BudgetView` but treated
-differently:
+Three category `type`s, rendered by the same `BudgetView` but treated
+differently. **All the month's arithmetic is `budgetMath(budget, month)`**,
+shared by `BudgetView` and the assistant's `get_budget_summary` so the two can't
+disagree — don't recompute totals or Free anywhere else.
+
+- **Sections are user-made too.** "+ New section" at the bottom (`AddBudgetSection`)
+  asks for a name and a kind — Spending as fixed costs or a monthly budget (with
+  a cap), or Income. Ids are slugged with `catIdFor`, the same as task sections;
+  a new section stores its own `color`, picked as the least-used of
+  `BUDGET_COLORS`. The seeded ones predate that and fall back to
+  `BUDGET_CAT_META`, so always read colour through `budgetColor(c)`.
+  - Like task sections, **only an empty section can be deleted** (the ✕ appears
+    on hover), and **Free never can** — it is computed from all the others.
+  - Every `"budget"` section other than Free has an editable cap, not just Food.
+- **`"income"`** (External income) — money earned this month on top of salary,
+  dated like purchases and counted for the current month only. It **adds to what
+  is available**, so it is Free that grows: the donut's total and every
+  percentage are measured against `available` = salary + this month's earnings.
+  `ensureBudgetSeed` backfills the section once, behind `budget.seededIncome`,
+  so deleting it on purpose doesn't bring it back.
 
 - **`"fixed"`** (Housing, Loans, Investments, Monthly Fees) — the category's
   `items` *are* the budget; there's no separate target to compare against.
@@ -857,10 +882,10 @@ differently:
   categories — a fixed category's items *are* its budget, so a one-click
   "I bought this again" makes no sense there.
 - **Free's `budget` is never read from storage** — `defaultBudget()` sets it
-  to `null` as a placeholder. `BudgetView` always computes it live as
-  `monthlyIncome - (sum of fixed categories) - Food's budget`, so editing
-  Housing/Loans/Investments/Fees/Food immediately changes what Free shows,
-  the same render it's edited in.
+  to `null` as a placeholder. `budgetMath` always computes it live as
+  `monthlyIncome + this month's income - (sum of fixed sections) - (every other
+  cap)`, so editing any section immediately changes what Free shows, the same
+  render it's edited in.
 - Ring/color logic: `var(--pine)` (or the category's own color) under 75%
   spent, `var(--amber)` from 75% up to the cap, `var(--tomato)` once
   `remaining` goes negative (shown as "over by $X" instead of "$X left").

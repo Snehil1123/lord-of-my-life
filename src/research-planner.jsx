@@ -833,6 +833,9 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .presetamt{font-family:var(--font-mono); font-size:12px; color:var(--muted);}
 .preset .xbtn{padding:2px 8px 2px 2px; font-size:12px;}
 .preset:hover .xbtn{opacity:1;}
+.cathead:hover .xbtn{opacity:1;}
+.newsection{margin-top:22px; padding:14px 16px;}
+.newsectionlbl{align-self:center; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--muted);}
 .presetadd{border:1px dashed var(--line); background:none; border-radius:999px; padding:6px 12px; font-size:13px; color:var(--muted);}
 .presetadd:hover{border-color:var(--muted); color:var(--ink);}
 .presetform{display:flex; gap:6px; align-items:center; flex-wrap:wrap; padding:2px 16px 10px;}
@@ -1401,7 +1404,32 @@ const BUDGET_CAT_META = {
   fees: { color: "var(--amber)" },
   food: { color: "var(--tomato)" },
   free: { color: "var(--teal)" },
+  external: { color: "var(--pine)" },
 };
+// sections the user adds carry their own colour; the seeded ones predate that
+const BUDGET_COLORS = ["var(--plum)", "var(--amber)", "var(--slate)", "var(--teal)", "var(--tomato)", "var(--pine)"];
+const budgetColor = (c) => c.color || BUDGET_CAT_META[c.id]?.color || "var(--slate)";
+
+/* The month's arithmetic, shared by the Budget tab and the assistant's summary so
+   the two can't disagree. Three kinds of section: "fixed" (the items are the
+   monthly cost), "budget" (a cap that this month's purchases draw down) and
+   "income" (money earned this month). Income adds to what's available, so it is
+   Free that grows: Free is whatever is left of salary plus this month's earnings
+   once every fixed cost and every other cap is set aside. */
+function budgetMath(b, month) {
+  const inMonth = (items) => items.filter((i) => (i.date || "").slice(0, 7) === month);
+  const sum = (items) => items.reduce((s, i) => s + i.amount, 0);
+  const total = (c) => (c.type === "fixed" ? sum(c.items) : sum(inMonth(c.items)));
+  const fixed = b.categories.filter((c) => c.type === "fixed");
+  const caps = b.categories.filter((c) => c.type === "budget" && c.id !== "free");
+  const incomes = b.categories.filter((c) => c.type === "income");
+  const free = b.categories.find((c) => c.id === "free");
+  const earned = incomes.reduce((s, c) => s + total(c), 0);
+  const fixedTotal = fixed.reduce((s, c) => s + total(c), 0);
+  const available = b.monthlyIncome + earned;
+  const freeBudget = available - fixedTotal - caps.reduce((s, c) => s + (c.budget || 0), 0);
+  return { inMonth, total, fixed, caps, incomes, free, earned, fixedTotal, available, freeBudget };
+}
 function defaultBudget() {
   return {
     monthlyIncome: 3000,
@@ -1424,13 +1452,25 @@ function defaultBudget() {
       ] },
       { id: "food", name: "Food", type: "budget", budget: 400, items: [] },
       { id: "free", name: "Free", type: "budget", budget: null, items: [] }, // budget computed at render time
+      { id: "external", name: "External income", type: "income", items: [] },
     ],
+    seededIncome: true,
   };
 }
-// One-time backfill for existing users, same pattern as ensureRecurringSeeds.
+// One-time backfill for existing users, same pattern as ensureRecurringSeeds. The
+// income section is its own flag, so deleting it on purpose doesn't bring it back.
 function ensureBudgetSeed(data) {
-  if (data.budget) return data;
-  return { ...data, budget: defaultBudget() };
+  if (!data.budget) return { ...data, budget: defaultBudget() };
+  if (data.budget.seededIncome) return data;
+  const has = data.budget.categories.some((c) => c.id === "external");
+  return {
+    ...data,
+    budget: {
+      ...data.budget, seededIncome: true,
+      categories: has ? data.budget.categories
+        : [...data.budget.categories, { id: "external", name: "External income", type: "income", items: [] }],
+    },
+  };
 }
 function ensureCatSeed(data) {
   if (data.categories) return data;
@@ -3094,7 +3134,7 @@ const toggleAllSubtasks = (data, setData, taskId, setBurst) => {
   updateSubtasks(data, setData, taskId, (t) => ({ ...t, subtasks: t.subtasks.map((s) => ({ ...s, checked: target })) }), setBurst);
 };
 
-function SubtaskRow({ sub, onToggle, onDelete, onEdit, now, inSession, sessionEmoji }) {
+function SubtaskRow({ sub, onToggle, onDelete, onEdit, now, inSession, sessionEmoji, onTimer, timing }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(sub.title);
   const [minutes, setMinutes] = useState(sub.minutes);
@@ -3142,6 +3182,11 @@ function SubtaskRow({ sub, onToggle, onDelete, onEdit, now, inSession, sessionEm
         )}
         <span className="taskmin">{sub.minutes} min</span>
       </span>
+      {onTimer && !sub.checked && (
+        <button className="subtoggle" style={timing ? { color: "var(--pine)" } : undefined}
+          title={timing ? "This subtask's timer is running" : "Time just this subtask — one countdown, no pomodoro"}
+          onClick={onTimer}>⏱</button>
+      )}
       <button className="xbtn" onClick={startEdit} title="Edit subtask">✎</button>
       <button className="xbtn" onClick={onDelete} title="Delete subtask">✕</button>
     </div>
@@ -4154,21 +4199,57 @@ function PresetBar({ presets, onLog, onDelete, onAdd }) {
   );
 }
 
+const SECTION_KINDS = [
+  ["fixed", "Fixed costs", "Things you pay every month — the items are the cost."],
+  ["budget", "Monthly budget", "A cap that what you buy this month draws down."],
+  ["income", "Income", "Money you earned this month, on top of your salary. It adds to Free."],
+];
+
+function AddBudgetSection({ onAdd }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ name: "", type: "budget", cap: "" });
+  const close = () => { setOpen(false); setForm({ name: "", type: "budget", cap: "" }); };
+  const submit = () => {
+    if (!form.name.trim()) return;
+    onAdd(form.name.trim(), form.type, Math.max(0, +form.cap || 0));
+    close();
+  };
+  if (!open) return <button className="qadd" style={{ marginTop: 22 }} onClick={() => setOpen(true)}>+ New section</button>;
+  return (
+    <div className="card newsection">
+      <input className="field" style={{ width: "100%" }} autoFocus placeholder="Section name (e.g. Travel, Tutoring)"
+        value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+        onKeyDown={(e) => e.key === "Enter" && submit()} />
+      <div className="setchips" style={{ marginTop: 10 }}>
+        <span className="newsectionlbl">Spending</span>
+        {SECTION_KINDS.slice(0, 2).map(([k, label]) => (
+          <button key={k} className={`setchip ${form.type === k ? "on" : ""}`} onClick={() => setForm({ ...form, type: k })}>{label}</button>
+        ))}
+        <span className="newsectionlbl" style={{ marginLeft: 8 }}>or</span>
+        <button className={`setchip ${form.type === "income" ? "on" : ""}`} onClick={() => setForm({ ...form, type: "income" })}>Income</button>
+      </div>
+      <p className="sethint" style={{ margin: "8px 0 0" }}>{SECTION_KINDS.find(([k]) => k === form.type)[2]}</p>
+      <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 10 }}>
+        {form.type === "budget" && (
+          <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 5 }}>
+            cap $ <input type="number" min="0" className="field" style={{ width: 80 }} value={form.cap}
+              onChange={(e) => setForm({ ...form, cap: e.target.value })} onKeyDown={(e) => e.key === "Enter" && submit()} />
+            / month
+          </label>
+        )}
+        <button className="btn primary" style={{ marginLeft: "auto" }} disabled={!form.name.trim()} onClick={submit}>Add section</button>
+        <button className="btn ghost" onClick={close}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 function BudgetView({ data, setData, now }) {
   const budget = data.budget;
-  const thisMonth = monthKey(now);
-  const itemsThisMonth = (items) => items.filter((i) => (i.date || "").slice(0, 7) === thisMonth);
-
-  const catTotal = (cat) => cat.type === "fixed"
-    ? cat.items.reduce((s, i) => s + i.amount, 0)
-    : itemsThisMonth(cat.items).reduce((s, i) => s + i.amount, 0);
-
-  const fixedCats = budget.categories.filter((c) => c.type === "fixed");
-  const fixedTotal = fixedCats.reduce((s, c) => s + catTotal(c), 0);
-  const foodCat = budget.categories.find((c) => c.id === "food");
-  const freeCat = budget.categories.find((c) => c.id === "free");
-  const freeBudget = budget.monthlyIncome - fixedTotal - foodCat.budget;
-  const spendCats = [foodCat, { ...freeCat, budget: freeBudget }];
+  const m = budgetMath(budget, monthKey(now));
+  const { inMonth: itemsThisMonth, total: catTotal, fixed: fixedCats, freeBudget } = m;
+  // Free last: it is whatever the others leave
+  const spendCats = [...m.caps, ...(m.free ? [{ ...m.free, budget: freeBudget }] : [])];
 
   const updateCat = (catId, fn) => setData((prev) => ({
     ...prev,
@@ -4180,12 +4261,38 @@ function BudgetView({ data, setData, now }) {
   const addPreset = (catId, name, amount) => updateCat(catId, (c) => ({ ...c, presets: [...(c.presets || []), { id: uid(), name, amount }] }));
   const delPreset = (catId, pid) => updateCat(catId, (c) => ({ ...c, presets: (c.presets || []).filter((p) => p.id !== pid) }));
   const setIncome = (v) => setData((prev) => ({ ...prev, budget: { ...prev.budget, monthlyIncome: Math.max(0, +v || 0) } }));
-  const setFoodBudget = (v) => updateCat("food", (c) => ({ ...c, budget: Math.max(0, +v || 0) }));
+  const setCap = (catId, v) => updateCat(catId, (c) => ({ ...c, budget: Math.max(0, +v || 0) }));
+  // id and colour worked out before the updater, so re-running it can't mint a second id
+  const addSection = (name, type, cap) => {
+    const id = catIdFor(name, budget.categories);
+    // the least-used colour, so a new section doesn't wear an existing one's
+    const uses = (col) => budget.categories.filter((c) => budgetColor(c) === col).length;
+    const color = BUDGET_COLORS.reduce((best, col) => (uses(col) < uses(best) ? col : best));
+    const section = { id, name, type, color, items: [], ...(type === "budget" ? { budget: cap } : {}) };
+    setData((prev) => ({ ...prev, budget: { ...prev.budget, categories: [...prev.budget.categories, section] } }));
+  };
+  // Same rule as task sections: only an empty one can go, so nothing logged is lost.
+  // Free is computed from all the others and can't be removed.
+  const delSection = (catId) => setData((prev) => ({
+    ...prev,
+    budget: { ...prev.budget, categories: prev.budget.categories.filter((c) => c.id !== catId || c.items.length > 0) },
+  }));
+  const deletable = (c) => c.id !== "free" && c.items.length === 0;
+  const sectionHead = (c, extra) => (
+    <>
+      <span className="catdot" style={{ background: budgetColor(c) }} />
+      <span className="catname" style={{ color: budgetColor(c) }}>{c.name}</span>
+      {extra}
+      {deletable(c) && (
+        <button className="xbtn" title="Delete this section" onClick={() => delSection(c.id)}>✕</button>
+      )}
+    </>
+  );
 
   const donutSegments = [
-    ...fixedCats.map((c) => ({ id: c.id, name: c.name, color: BUDGET_CAT_META[c.id]?.color, amount: catTotal(c) })),
-    { id: "food", name: "Food", color: BUDGET_CAT_META.food.color, amount: foodCat.budget },
-    { id: "free", name: "Free", color: BUDGET_CAT_META.free.color, amount: Math.max(0, freeBudget) },
+    ...fixedCats.map((c) => ({ id: c.id, name: c.name, color: budgetColor(c), amount: catTotal(c) })),
+    ...m.caps.map((c) => ({ id: c.id, name: c.name, color: budgetColor(c), amount: c.budget || 0 })),
+    ...(m.free ? [{ id: "free", name: m.free.name, color: budgetColor(m.free), amount: Math.max(0, freeBudget) }] : []),
   ];
 
   return (
@@ -4194,21 +4301,26 @@ function BudgetView({ data, setData, now }) {
         <div style={{ flex: 1, minWidth: 220 }}>
           <div className="h2">Budget</div>
         </div>
-        <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 6 }}>
-          monthly income $ <input type="number" min="0" className="field" style={{ width: 90 }} value={budget.monthlyIncome} onChange={(e) => setIncome(e.target.value)} />
-        </label>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+          <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 6 }}>
+            monthly income $ <input type="number" min="0" className="field" style={{ width: 90 }} value={budget.monthlyIncome} onChange={(e) => setIncome(e.target.value)} />
+          </label>
+          {m.earned > 0 && (
+            <span className="catcount" style={{ color: "var(--pine)" }}>+ {fmtMoney(m.earned)} earned this month</span>
+          )}
+        </div>
       </div>
 
       <section className="card" style={{ marginTop: 18 }}>
         <div className="budgetoverview">
-          <BudgetDonut segments={donutSegments} total={budget.monthlyIncome} />
+          <BudgetDonut segments={donutSegments} total={m.available} />
           <div className="budgetlegend">
             {donutSegments.map((s) => (
               <div className="legendrow" key={s.id}>
                 <span className="catdot" style={{ background: s.color }} />
                 <span className="legendname">{s.name}</span>
                 <span className="legendamt">{fmtMoney(s.amount)}</span>
-                <span className="legendpct">{budget.monthlyIncome > 0 ? Math.round((s.amount / budget.monthlyIncome) * 100) : 0}%</span>
+                <span className="legendpct">{m.available > 0 ? Math.round((s.amount / m.available) * 100) : 0}%</span>
               </div>
             ))}
           </div>
@@ -4221,16 +4333,13 @@ function BudgetView({ data, setData, now }) {
           const monthItems = itemsThisMonth(c.items);
           return (
             <div key={c.id} className="card" style={{ flex: "1 1 320px" }}>
-              <div className="cathead" style={{ padding: "14px 16px 0" }}>
-                <span className="catdot" style={{ background: BUDGET_CAT_META[c.id]?.color }} />
-                <span className="catname" style={{ color: BUDGET_CAT_META[c.id]?.color }}>{c.name}</span>
-              </div>
+              <div className="cathead" style={{ padding: "14px 16px 0" }}>{sectionHead(c)}</div>
               <div className="gaugerow">
-                <BudgetGauge spent={spent} budget={c.budget} color={BUDGET_CAT_META[c.id]?.color} />
+                <BudgetGauge spent={spent} budget={c.budget} color={budgetColor(c)} />
                 <div className="gaugemeta">
                   spent {fmtMoney(spent)} of{" "}
-                  {c.id === "food"
-                    ? <input type="number" min="0" className="field" style={{ width: 64, padding: "2px 6px" }} value={c.budget} onChange={(e) => setFoodBudget(e.target.value)} />
+                  {c.id !== "free"
+                    ? <input type="number" min="0" className="field" style={{ width: 64, padding: "2px 6px" }} value={c.budget} onChange={(e) => setCap(c.id, e.target.value)} />
                     : <b style={{ color: "var(--ink)" }}>{fmtMoney(c.budget)}</b>}
                 </div>
               </div>
@@ -4246,14 +4355,28 @@ function BudgetView({ data, setData, now }) {
         })}
       </div>
 
+      {m.incomes.map((c) => {
+        const monthItems = itemsThisMonth(c.items);
+        return (
+          <div className="catblock" key={c.id}>
+            <div className="cathead">
+              {sectionHead(c, <span className="catcount" style={{ color: "var(--pine)" }}>+{fmtMoney(catTotal(c))} this month</span>)}
+            </div>
+            <div className="card">
+              {monthItems.map((i) => <BudgetRow key={i.id} item={i} onUpdate={(patch) => updateItem(c.id, i.id, patch)} onDelete={(id) => delItem(c.id, id)} />)}
+              {monthItems.length === 0 && <div className="emptystate" style={{ padding: "14px 16px" }}>Nothing earned this month yet.</div>}
+              <AddBudgetItemRow onAdd={(name, amount) => addItem(c.id, name, amount)} placeholder="Add money you earned…" />
+            </div>
+          </div>
+        );
+      })}
+
       {fixedCats.map((c) => (
         <div className="catblock" key={c.id}>
           <div className="cathead">
-            <span className="catdot" style={{ background: BUDGET_CAT_META[c.id]?.color }} />
-            <span className="catname" style={{ color: BUDGET_CAT_META[c.id]?.color }}>{c.name}</span>
-            <span className="catcount">{fmtMoney(catTotal(c))}/mo</span>
+            {sectionHead(c, <span className="catcount">{fmtMoney(catTotal(c))}/mo</span>)}
           </div>
-          {c.items.length > 0 && <SegmentBar items={c.items} color={BUDGET_CAT_META[c.id]?.color} />}
+          {c.items.length > 0 && <SegmentBar items={c.items} color={budgetColor(c)} />}
           <div className="card">
             {c.items.map((i) => <BudgetRow key={i.id} item={i} onUpdate={(patch) => updateItem(c.id, i.id, patch)} onDelete={(id) => delItem(c.id, id)} />)}
             {c.items.length === 0 && <div className="emptystate" style={{ padding: "14px 16px" }}>No items yet.</div>}
@@ -4261,6 +4384,8 @@ function BudgetView({ data, setData, now }) {
           </div>
         </div>
       ))}
+
+      <AddBudgetSection onAdd={addSection} />
     </div>
   );
 }
@@ -4850,7 +4975,7 @@ function GuestColumn({ guest, s, cycle, now, onAddTask, onToggleTask, onDelTask,
 /* A queued task. The subtask list is a *sibling* of .qrow, not a child — the row
    itself completes the task on click, so nesting the subtasks inside it would
    mean checking a subtask also ticked off its parent. */
-function QueueRow({ entry, data, setData, now, isActive, wholeSession, burst, setBurst, onComplete, onRemove, onPush, onTimer, timing, drag }) {
+function QueueRow({ entry, data, setData, now, isActive, wholeSession, burst, setBurst, onComplete, onRemove, onPush, onTimer, timing, onTimerQid, timingQid, drag }) {
   const [expanded, setExpanded] = useState(false);
   const [pushing, setPushing] = useState(false);
   const t = entry.item;
@@ -4925,6 +5050,8 @@ function QueueRow({ entry, data, setData, now, isActive, wholeSession, burst, se
         <div className="subtasks qsubtasks">
           {subs.map((sb) => (
             <SubtaskRow key={sb.id} sub={sb} now={now}
+              onTimer={onTimerQid && (() => onTimerQid(qidFor(t.id, sb.id)))}
+              timing={timingQid === qidFor(t.id, sb.id)}
               onToggle={() => toggleSubtask(data, setData, t.id, sb.id, setBurst)}
               onDelete={() => delSubtask(data, setData, t.id, sb.id, setBurst)}
               onEdit={(patch) => editSubtask(data, setData, t.id, sb.id, patch, setBurst)} />
@@ -5187,6 +5314,13 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
     setDraft({ ...draft, title: "", minutes: 25, cat: draftCat });
     setCreating(false);
   };
+  /* One subtask of a task queued whole. The timer takes the same entry shape a
+     subtask queued on its own resolves to, so its length is that subtask's
+     minutes and finishing credits nothing — subtasks are ticked off by hand. */
+  const timeSubtask = (qid) => {
+    const entry = resolveQueued(qid, data.tasks, data.settings.work);
+    if (entry) taskTimer.startFor(entry);
+  };
   const removeFromQueue = (id) => setData((prev) => {
     const { [id]: _gone, ...pushedOff } = prev.pushedOff || {};
     return { ...prev, sessionQueue: (prev.sessionQueue || []).filter((x) => x !== id), pushedOff };
@@ -5349,6 +5483,7 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
           onComplete={() => completeTask(q)} onRemove={() => removeFromQueue(q.qid)}
           onPush={(when) => pushOff(q.qid, when)}
           onTimer={taskTimer && (() => taskTimer.startFor(q))} timing={taskTimer?.state?.qid === q.qid}
+          onTimerQid={taskTimer && timeSubtask} timingQid={taskTimer?.state?.qid}
           drag={qDrag(q.qid)} />
         {(blockers[t.id]?.during || []).map((ev) => (
           <div className="qevent during" key={ev.id} title="This lands in the middle of the task above">
@@ -5662,21 +5797,17 @@ function runPlannerTool(data, name, input) {
     }
 
     case "get_budget_summary": {
-      const b = data.budget;
       const thisMonth = monthKey(new Date());
-      const spent = (c) => c.items.filter((i) => (i.date || "").slice(0, 7) === thisMonth).reduce((s, i) => s + i.amount, 0);
-      const catTotal = (c) => (c.type === "fixed" ? c.items.reduce((s, i) => s + i.amount, 0) : spent(c));
-      const fixed = b.categories.filter((c) => c.type === "fixed");
-      const fixedTotal = fixed.reduce((s, c) => s + catTotal(c), 0);
-      const food = b.categories.find((c) => c.id === "food");
-      const free = b.categories.find((c) => c.id === "free");
-      const freeBudget = b.monthlyIncome - fixedTotal - food.budget;
+      const m = budgetMath(data.budget, thisMonth);
+      const cap = (c, budget) => ({ name: c.name, budget, spent: m.total(c), remaining: budget - m.total(c) });
       return same({
         month: thisMonth,
-        monthlyIncome: b.monthlyIncome,
-        fixed: fixed.map((c) => ({ name: c.name, total: catTotal(c), items: c.items.map((i) => ({ name: i.name, amount: i.amount })) })),
-        food: { budget: food.budget, spent: spent(food), remaining: food.budget - spent(food) },
-        free: { budget: freeBudget, spent: spent(free), remaining: freeBudget - spent(free) },
+        monthlyIncome: data.budget.monthlyIncome,
+        earnedThisMonth: m.earned,
+        income: m.incomes.map((c) => ({ name: c.name, total: m.total(c), items: m.inMonth(c.items).map((i) => ({ name: i.name, amount: i.amount })) })),
+        fixed: m.fixed.map((c) => ({ name: c.name, total: m.total(c), items: c.items.map((i) => ({ name: i.name, amount: i.amount })) })),
+        budgets: m.caps.map((c) => cap(c, c.budget || 0)),
+        free: m.free ? cap(m.free, m.freeBudget) : null,
       });
     }
 

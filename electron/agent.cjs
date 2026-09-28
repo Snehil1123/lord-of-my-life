@@ -144,7 +144,7 @@ function buildPlannerServer({ tool, createSdkMcpServer, z }, callTool) {
         relay("add_phases")),
 
       tool("get_budget_summary",
-        "Read this month's budget: monthly income, each category's total, and how much of the Food and Free budgets is left.",
+        "Read this month's budget: monthly income, money earned this month, each fixed section's total, and how much of each spending budget (including Free) is left.",
         {}, relay("get_budget_summary"), readOnly),
     ],
   });
