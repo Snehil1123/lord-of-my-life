@@ -2159,7 +2159,7 @@ function SettingsPanel({ data, setData, theme, onClose }) {
                 onClick={() => set({ fantasyFont: k })}>
                 <span className="setfontname" style={{ fontFamily: f.display }}>{f.name.split(" & ")[0]}</span>
                 <span className="setfontsample" style={{ fontFamily: f.body }}>
-                  Draft the NDSEG personal statement
+                  Plan the week ahead, one task at a time
                 </span>
                 <span className="setfontnote">{f.note}</span>
               </button>
