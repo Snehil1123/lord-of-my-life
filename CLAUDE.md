@@ -97,7 +97,8 @@ process — see "AI assistant".)
 data = {
   settings: { work, short, long, breaks,  // pomodoro minutes; breaks:false runs them back to back
               timerMode,                  // "task" sizes each focus session to the next task
-              tabs, textSize, fantasyFont, clock24, sounds },  // the gear, see "Settings"
+              tabs, textSize, fantasyFont, clock24, sounds,    // the gear, see "Settings"
+              picker },                   // "grid": Session's section pickers as tiles
   pomoLog:  { "YYYY-MM-DD": count },      // completed work sessions per day
   sessionQueue: [taskId],                // tasks lined up in the Session tab
   pushedOff: { qid: epochMs },           // queue entries set aside until then, see "Session queue"
@@ -621,6 +622,16 @@ looking for the old `.timerring` SVG, it was replaced by `.pomoprog`.
   through parts of it. Picking subtasks leaves the panel open — you normally take
   several, and each disappears as it's added; picking a whole task closes it.
   `onAdd` therefore only adds, and the picker decides when to call `onClose`.
+- **Both pickers have a grid mode** (`settings.picker: "grid"`, read by
+  `sectionGrid`). `CatGrid` shows every section of both groups at once as tiles
+  tinted with the section's colour, so choosing one is a single click instead of
+  a drill-down or two dropdowns. In `QueuePicker` it replaces the group and
+  section levels — picking a tile sets both, and Back from a section returns to
+  the grid rather than to a group step that no longer exists. In New Task it
+  replaces both `<select>`s, and picking a tile sets `group` and `cat` together.
+  The tint is `color-mix` over `--tile`, because section colours are `var()`
+  tokens and can't take an alpha suffix. Grid mode lifts `.pickpanel`'s height
+  cap (`.gridmode`), since avoiding a scroll is the point of it.
 - **"✎ New Task" creates a task without leaving the Session tab**: title,
   minutes, group, category. `createTask` builds exactly what `TaskGroupView`'s
   `addTask` builds, so it's an ordinary task — it appears under its category in
@@ -1470,6 +1481,8 @@ trap.
   the theme's own tokens without a second `[data-theme]` block. Every family is in
   the one Google Fonts `@import`; the browser only downloads faces that actually
   render, so listing them all costs one stylesheet request, not fifteen fonts.
+- **`picker`** chooses between the list and grid section pickers in Session (see
+  "Session queue"); anything but `"grid"` is the list, so no migration.
 - **`clock24` and `sounds` are read from module-level mirrors** (`CLOCK_24`,
   `SOUND_ON`) rather than passed down, because `fmtClock`/`fmtHM` are wanted at
   every depth and `tone()` isn't a component at all. An effect keeps them in step.

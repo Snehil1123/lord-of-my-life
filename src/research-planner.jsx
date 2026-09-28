@@ -85,6 +85,7 @@ const CSS = `
 .fw[data-theme="fantasy"] .legendname,
 .fw[data-theme="fantasy"] .budgetname-input,
 .fw[data-theme="fantasy"] .pickitem,
+.fw[data-theme="fantasy"] .cattile,
 .fw[data-theme="fantasy"] .aimsg{font-size:var(--fsz-body);}
 .fw[data-theme="fantasy"] .sub,
 .fw[data-theme="fantasy"] .emptystate,
@@ -123,6 +124,7 @@ const CSS = `
 .fw[data-theme="fantasy"] .todaypomos,
 .fw[data-theme="fantasy"] .aitool{font-size:var(--fsz-mono);}
 .fw[data-theme="fantasy"] .creator{font-size:var(--fsz-mono);}
+.fw[data-theme="fantasy"] .cattilecount{font-size:var(--fsz-mono);}
 .fw[data-theme="fantasy"] .archivetoggle{font-size:16px;}
 .fw[data-theme="fantasy"] .catname{font-size:16.5px;}
 .fw[data-theme="fantasy"] .tab{font-size:17.5px;}
@@ -695,6 +697,22 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .pickitem:disabled{opacity:.38;}
 .pickitem:disabled:hover{background:none;}
 .pickchev{color:var(--muted); flex:none;}
+.pickpanel.gridmode{max-height:none;}
+.catgridgroup + .catgridgroup{margin-top:4px;}
+.catgrid{display:grid; grid-template-columns:repeat(auto-fill, minmax(118px, 1fr)); gap:6px; padding:2px 2px 6px;}
+.cattile{
+  display:flex; flex-direction:column; align-items:flex-start; justify-content:space-between; gap:4px;
+  padding:9px 10px; text-align:left; border-radius:8px;
+  border:1px solid color-mix(in srgb, var(--tile) 40%, var(--line)); border-left:4px solid var(--tile);
+  background:color-mix(in srgb, var(--tile) 13%, var(--card));
+  color:var(--ink); font-size:14px; font-weight:600; transition:background .12s;
+}
+.cattile:hover{background:color-mix(in srgb, var(--tile) 26%, var(--card));}
+.cattile.on{background:color-mix(in srgb, var(--tile) 36%, var(--card)); box-shadow:inset 0 0 0 2px var(--tile);}
+.cattile:disabled{opacity:.38;}
+.cattile:disabled:hover{background:color-mix(in srgb, var(--tile) 13%, var(--card));}
+.cattilename{max-width:100%; line-height:1.25; overflow-wrap:break-word;}
+.cattilecount{font-family:var(--font-mono); font-size:11.5px; font-weight:400; color:var(--muted);}
 .pickcrumb{display:flex; align-items:center; gap:8px; padding:0 2px 8px; border-bottom:1px solid var(--line); margin-bottom:4px;}
 .pickpath{font-size:12.5px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .picksub{font-family:var(--font-mono); font-size:11.5px; color:var(--muted); flex:none;}
@@ -1315,6 +1333,8 @@ const takesBreaks = (data) => breaksOn(data.settings);
 /* A focus session is either the focus setting or exactly as long as the next
    task. Read as "explicitly task", so data saved before the option runs fixed. */
 const taskTimed = (settings) => settings.timerMode === "task";
+// Session's section pickers as one colour-coded grid instead of a drill-down and dropdowns
+const sectionGrid = (settings) => settings.picker === "grid";
 
 /* Pushed-off queue entries, as { qid: epoch ms it comes back }. An instant, not
    wall-clock like events: "in two hours" means two hours whatever the date.
@@ -2102,6 +2122,18 @@ function SettingsPanel({ data, setData, theme, onClose }) {
                 at <input type="time" className="field" value={at} onChange={(e) => set({ remindAt: e.target.value || "17:00" })} />
               </label>
             )}
+          </div>
+        </div>
+
+        <div className="setgroup">
+          <div className="setlabel">Picking a section</div>
+          <p className="sethint">
+            How Session's Add Task and New Task choose where a task lives: step through
+            lists and dropdowns, or pick from a grid of every section at once.
+          </p>
+          <div className="setchips">
+            <button className={`setchip ${!sectionGrid(st) ? "on" : ""}`} onClick={() => set({ picker: "list" })}>List</button>
+            <button className={`setchip ${sectionGrid(st) ? "on" : ""}`} onClick={() => set({ picker: "grid" })}>Grid</button>
           </div>
         </div>
 
@@ -4913,7 +4945,39 @@ function QueueRow({ entry, data, setData, now, isActive, wholeSession, burst, se
    down to all of it. Adding it whole is still offered there, and only while it
    isn't already queued. Picking subtasks leaves the list open, since you're
    normally taking several; picking a whole task closes it. */
+/* Every section from both groups as one grid of tiles, tinted with the section's
+   own colour. Its colours are var() tokens, so the tint is a color-mix rather
+   than an alpha suffix. `count` is optional: the queue picker greys out sections
+   with nothing left to add, the New Task form has nothing to count. */
+function CatGrid({ data, selected, count, onPick }) {
+  return (
+    <>
+      {[["work", "Work"], ["personal", "Personal"]].map(([g, label]) => {
+        const cats = catsIn(data, g);
+        return cats.length > 0 && (
+          <div key={g} className="catgridgroup">
+            <div className="pickgroup">{label}</div>
+            <div className="catgrid">
+              {cats.map((c) => {
+                const n = count ? count(c.id) : null;
+                return (
+                  <button key={c.id} className={`cattile ${selected === c.id ? "on" : ""}`}
+                    style={{ "--tile": c.color }} disabled={n === 0} onClick={() => onPick(c)}>
+                    <span className="cattilename">{c.name}</span>
+                    {n !== null && <span className="cattilecount">{n} open</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 function QueuePicker({ data, queueIds, onAdd, onClose }) {
+  const grid = sectionGrid(data.settings);
   const [group, setGroup] = useState(null);
   const [catId, setCatId] = useState(null);
   const [taskId, setTaskId] = useState(null);
@@ -4931,7 +4995,11 @@ function QueuePicker({ data, queueIds, onAdd, onClose }) {
 
   const cats = group ? catsIn(data, group) : [];
   const task = taskId ? data.tasks.find((t) => t.id === taskId) : null;
-  const back = () => (task ? setTaskId(null) : catId ? setCatId(null) : setGroup(null));
+  const back = () => {
+    if (task) setTaskId(null);
+    else if (catId) { setCatId(null); if (grid) setGroup(null); } // the grid has no group step
+    else setGroup(null);
+  };
 
   const crumb = [
     group === "work" ? "Work" : group === "personal" ? "Personal" : null,
@@ -5000,6 +5068,11 @@ function QueuePicker({ data, queueIds, onAdd, onClose }) {
         </button>
       );
     });
+  } else if (grid) {
+    body = open.length > 0 && (
+      <CatGrid data={data} count={(id) => open.filter((t) => t.cat === id).length}
+        onPick={(c) => { setGroup(c.group); setCatId(c.id); }} />
+    );
   } else {
     body = [["work", "Work"], ["personal", "Personal"]].map(([g, label]) => {
       const n = countIn(g);
@@ -5015,7 +5088,7 @@ function QueuePicker({ data, queueIds, onAdd, onClose }) {
   }
 
   return (
-    <div className="pickpanel">
+    <div className={`pickpanel ${grid && !group ? "gridmode" : ""}`}>
       {header}
       {body}
       {!group && !open.length && (
@@ -5095,6 +5168,7 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
   // A task typed in here is an ordinary task, filed under a real category, so it
   // shows up in Work/Personal like any other. The task and its queue entry are
   // written in one setData — two writes off the same `data` would drop the first.
+  const gridPick = sectionGrid(data.settings);
   const draftCats = catsIn(data, draft.group);
   const draftCat = draftCats.some((c) => c.id === draft.cat) ? draft.cat : draftCats[0]?.id || "";
   const createTask = () => {
@@ -5292,7 +5366,7 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
       {picking ? (
         <QueuePicker data={data} queueIds={queueIds} onAdd={addToQueue} onClose={() => setPicking(false)} />
       ) : creating ? (
-        <div className="pickpanel">
+        <div className={`pickpanel ${gridPick ? "gridmode" : ""}`}>
           <input className="field" style={{ width: "100%" }} autoFocus placeholder="What are you working on?"
             value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })}
             onKeyDown={(e) => e.key === "Enter" && createTask()} />
@@ -5301,6 +5375,7 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
               onChange={(e) => setDraft({ ...draft, minutes: e.target.value })}
               onKeyDown={(e) => e.key === "Enter" && createTask()} />
             <span style={{ fontSize: 13, color: "var(--muted)" }}>min</span>
+            {!gridPick && <>
             <select className="field" style={{ flex: 1, minWidth: 0 }} value={draft.group}
               onChange={(e) => setDraft({ ...draft, group: e.target.value, cat: "" })}>
               <option value="work">Work</option>
@@ -5311,8 +5386,15 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
               onChange={(e) => setDraft({ ...draft, cat: e.target.value })}>
               {draftCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
+            </>}
           </div>
-          {!draftCats.length && (
+          {gridPick && (
+            <div style={{ marginTop: 8 }}>
+              <CatGrid data={data} selected={draftCat}
+                onPick={(c) => setDraft({ ...draft, group: c.group, cat: c.id })} />
+            </div>
+          )}
+          {!draftCats.length && (!gridPick || !allCats(data).length) && (
             <div className="emptystate" style={{ padding: "10px 2px" }}>
               No sections in {draft.group === "work" ? "Work" : "Personal"} yet — add one there first.
             </div>
