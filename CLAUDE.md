@@ -202,9 +202,21 @@ bottom of Work or Personal.
   - `moveTask` and `moveCat` both no-op on an id of the wrong kind, which is what
     makes a cross-type drop harmless rather than something the drag has to
     prevent.
-  - a `dragover-before`/`dragover-after` insertion line on the hovered row,
-    picked to match where the move actually lands (below when moving down,
-    above when moving up).
+  - **The drop is a gap, not a line.** The dragged row is taken out of the list
+    (`display:none`) and a dashed `DropSlot` opens where it will land, holding a
+    ghost of its title — an edge said *where* but never *what*, and a faded row
+    left in place meant two of it on screen. The slot carries the id of the row
+    it opened beside, because letting go *on* the gap is the obvious thing to do
+    and resolved to no target before that.
+  - **Dragging into the top or bottom of the window scrolls it** (`edgeScroller`),
+    ramping with how far into the band the pointer is, or a list taller than the
+    screen cannot be reordered at all. Its tick re-resolves the drop target: the
+    pointer can sit perfectly still while the page moves underneath it.
+  - **`useListDrag` holds the per-list half** — what is carried, what it hovers,
+    and which side the gap goes. Tasks, the session queue and a task's subtasks
+    all reorder, and they were three copies of this. `order(id)` returns the ids
+    the dragged row may move among, which is what makes a task dropped on another
+    category's row — or a subtask dropped on another task's — no gap and no move.
 - **Tasks are reorderable by dragging the row.** `moveTask` uses the same
   shuffle-and-write-back as `moveCat`, over one category's slots in the flat
   `tasks` array. **Dropping onto a row in a different category is ignored** —
@@ -450,7 +462,19 @@ looking for the old `.timerring` SVG, it was replaced by `.pomoprog`.
   `sessionStats` adds no break minutes. The short/long inputs hide.
 - **Each queue row shows how long it still needs** (`.qlen`, `fmtDur`), which is
   `minutesLeft` — the same real-minutes reading the finish time uses, so a task
-  half done shows half its length.
+  half done shows half its length. It deliberately does **not** show the sessions
+  count: beside the subtask fraction that read as a second, contradictory
+  fraction, and how many pomodoros the time divides into is the timer's business.
+- **A task can be edited from its session row**, through the same `TaskEditForm`
+  the Work/Personal row uses — one task shown in two places must not grow two
+  different forms. A queued *subtask* edits the subtask itself and loses the
+  section picker, since a subtask lives on its task and has nowhere to go.
+- **Push-off sits in the gutter beside the row** (`.qpushbtn`, absolutely
+  positioned off `.qrow`), shown only for the row under the pointer: setting
+  something aside is rarer than the rest of the row's controls, and a queue of
+  twenty otherwise showed twenty arrows. Below 640px there is no gutter to hang
+  it in and it rejoins the row; on a touch screen there is no hover to reveal it
+  with, so it stays visible.
 - **An entry can be pushed off** (↷ on its row → 2 hours from now, or tomorrow).
   `data.pushedOff` is `{ qid: epoch ms it comes back }`, read through
   `isPushed`/`liveQueueIds`. Points that matter:
@@ -800,6 +824,10 @@ changes: `minutes` is a plain sum, `dueDate` is the *latest* subtask due date
 (you're not done until the last one lands), and `checked` is true only once
 every subtask is checked.
 
+- **Subtasks reorder by dragging**, in Work and in the session both —
+  `moveSubtask`, through `updateSubtasks` like every other subtask write even
+  though order changes nothing the parent derives, because the one route is what
+  keeps the re-derive and the burst from being forgotten by the next thing added.
 - **All subtask mutations go through `updateSubtasks(data, setData, taskId, fn, setBurst)`**,
   which applies `fn` to the task, re-derives it, and — if that derivation
   flips `checked` from false to true — stamps `completedDate` and fires the

@@ -30,7 +30,7 @@ See "Releasing" below.
 ## What's in it
 
 - **Work / Personal** — tasks under sections you define, each with a length, an
-  optional due date, and subtasks. Due dates glow gold on the day and pulse red
+  optional due date, and subtasks you can drag into order. Due dates glow gold on the day and pulse red
   once they're late. Editing a task lets you move it to any other section,
   including one on the other tab.
 - **Gantt Chart** — projects broken into dated phases, optionally grouped into
