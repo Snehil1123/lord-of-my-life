@@ -491,10 +491,18 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .cathead[data-catdrag]{cursor:grab;}
 .cathead[data-catdrag]:active{cursor:grabbing;}
 /* the row left behind while its snapshot follows the cursor */
-.taskrow.dragging, .qrow.dragging{opacity:.28;}
+/* lifted out of the list entirely — the gap below is where it is going, and
+   leaving a faded copy behind as well reads as two of them */
+.taskrow.dragging, .qrow.dragging, .subtaskrow.dragging{display:none;}
+.dropslot{
+  display:flex; align-items:center; min-height:38px; margin:2px 0; padding:6px 10px;
+  border:1.5px dashed var(--pine); border-radius:8px; background:var(--pine-soft);
+}
+.dropslot span{
+  font-size:15px; color:var(--muted); opacity:.75; overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap;
+}
 /* insertion line on the edge the row will actually land on */
-.taskrow.dragover-before, .qrow.dragover-before{box-shadow:inset 0 3px 0 var(--pine);}
-.taskrow.dragover-after, .qrow.dragover-after{box-shadow:inset 0 -3px 0 var(--pine);}
 .tagproj{font-size:12px; color:var(--muted); flex:none;}
 .taskmin{font-family:var(--font-mono); font-size:12px; color:var(--muted); flex:none; margin-left:auto;}
 .pomodots{display:flex; gap:3px; flex:none; align-items:center;}
@@ -657,6 +665,13 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .qlen{font-family:var(--font-mono); font-size:12px; color:var(--muted); flex:none;}
 /* the two ways to push an entry off, opened under its row — a sibling of the
    row for the same reason as its subtasks: a click on the row completes it */
+.qpushbtn{
+  position:absolute; left:calc(100% + 4px); top:50%; transform:translateY(-50%);
+  border:none; background:none; color:var(--muted); font-size:15px;
+  padding:2px 5px; border-radius:6px; opacity:0; transition:opacity .12s;
+}
+.qrow:hover .qpushbtn, .qpushbtn.on{opacity:1;}
+.qpushbtn:hover{color:var(--ink); background:var(--line-soft);}
 .qpushmenu{
   display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:-4px 0 8px;
   padding:6px 10px; border:1px solid var(--line); border-radius:8px;
@@ -1033,6 +1048,8 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
   .aigrip{display:none;}
 }
 @media (max-width:640px){
+  /* no gutter to hang it in at this width, so it rejoins the row */
+  .qpushbtn{position:static; transform:none; opacity:1; margin-left:auto;}
   .wrap{padding:18px 12px 70px;}
   .tabs{margin-left:0; width:100%; justify-content:space-between;}
   .pomodigits{font-size:56px;}
@@ -1046,6 +1063,7 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
    further up, so anything earlier than this would quietly lose to it. */
 @media (hover: none){
   .xbtn{opacity:.6;}
+  .qpushbtn{opacity:.6;}
   .catgrip{color:var(--muted);}
   .calevent .calresize{background:rgba(255,255,255,.3);}
 }
@@ -2768,7 +2786,7 @@ function SectionEditor({ section, cats, onAddPhase, onAddTask }) {
 function makeDragImage(el) {
   const cs = getComputedStyle(el);
   const clone = el.cloneNode(true);
-  clone.classList.remove("dragging", "dragover-before", "dragover-after");
+  clone.classList.remove("dragging");
   clone.style.cssText = `position:absolute; top:-9999px; left:0; margin:0; pointer-events:none;
     width:${el.offsetWidth}px; height:${el.offsetHeight}px; opacity:1;
     background:${cs.backgroundColor === "rgba(0, 0, 0, 0)" ? "var(--card)" : cs.backgroundColor};
@@ -2829,6 +2847,32 @@ function beginPointerDrag(e, { onBegin, onMove, onEnd, mouseSlop = true }) {
   else if (!mouseSlop) start(e);
 }
 
+/* A list taller than the window cannot be reordered without this: the row you
+   are aiming at is off-screen and the pointer has nowhere further to go. Speed
+   ramps with how far into the edge band the pointer is, so easing towards the
+   edge creeps and pinning yourself to it moves. `onTick` re-resolves the drop
+   target, because the pointer can sit perfectly still while the page moves
+   underneath it. */
+const EDGE_BAND = 90, EDGE_SPEED = 22;
+function edgeScroller(onTick) {
+  let dir = 0, raf = null;
+  const step = () => {
+    if (!dir) { raf = null; return; }
+    window.scrollBy(0, dir);
+    onTick();
+    raf = requestAnimationFrame(step);
+  };
+  return {
+    at: (y) => {
+      const over = EDGE_BAND - y, under = y - (window.innerHeight - EDGE_BAND);
+      dir = over > 0 ? -Math.ceil((over / EDGE_BAND) * EDGE_SPEED)
+        : under > 0 ? Math.ceil((under / EDGE_BAND) * EDGE_SPEED) : 0;
+      if (dir && !raf) raf = requestAnimationFrame(step);
+    },
+    stop: () => { dir = 0; if (raf) cancelAnimationFrame(raf); raf = null; },
+  };
+}
+
 /* Whichever target the pointer is actually over, which is how a drop is found
    now that there are no dragover events to hang it on. Each kind of drag reads
    its own attribute: a section dropped onto another section's *body* would
@@ -2837,6 +2881,46 @@ const dropUnder = (ev, attr) => {
   const hit = document.elementsFromPoint(ev.clientX, ev.clientY).find((n) => n.dataset?.[attr]);
   return hit ? hit.dataset[attr] : null;
 };
+
+/* The per-list half of a drag: which row is being carried, which one it is
+   hovering over, and which side of that one the gap belongs on. Three lists
+   reorder — tasks, the session queue, and a task's subtasks — and they were
+   three copies of this before. `order(id)` returns the ids the dragged row can
+   move among, which is what makes a task dropped on another category's row, or
+   a subtask dropped on another task's, come out as no gap and no move. */
+function useListDrag(order, onMove, attr) {
+  const held = useRef(null);
+  const [dragId, setDragId] = useState(null);
+  const [overId, setOverId] = useState(null);
+  const end = () => { held.current = null; setDragId(null); setOverId(null); };
+  const drag = (id) => ({
+    id,
+    attr,
+    dragging: dragId === id,
+    onStart: () => { held.current = id; setDragId(id); },
+    onEnd: end,
+    onOver: (tid) => setOverId((o) => (o === tid ? o : tid)),
+    onDrop: (tid) => { if (tid) onMove(held.current, tid); end(); },
+  });
+  /* Which side of `id` the gap opens on, matched to where the move actually
+     lands: below when carrying a row downwards, above when carrying it up. */
+  const slotFor = (id) => {
+    if (overId !== id || !dragId || dragId === id) return "";
+    const ids = order(dragId);
+    const from = ids.indexOf(dragId), to = ids.indexOf(id);
+    if (from < 0 || to < 0) return "";
+    return from < to ? "after" : "before";
+  };
+  return { drag, dragId, slotFor };
+}
+
+/* The gap a dragged row will drop into, holding a ghost of the row itself so
+   it is obvious *what* is about to land there and not only where. It answers to
+   the id of the row it opened beside: letting go *on* the gap is the obvious
+   thing to do, and without that it resolves to no target and drops nothing. */
+const DropSlot = ({ title, id, attr = "rowdrag" }) => (
+  <div className="dropslot" aria-hidden="true" {...{ [`data-${attr}`]: id }}><span>{title}</span></div>
+);
 
 /* Shared by TaskRow, QueueRow and the section headers. The element carries its
    own id, so one attribute marks both what can be picked up and what can be
@@ -2851,10 +2935,12 @@ function dragHandlers(drag) {
       if (e.button !== 0 || e.target.closest("button, input, select, textarea, a, label")) return;
       const row = e.currentTarget;
       let ghost = null, offX = 0, offY = 0, move = () => {};
+      let lastX = e.clientX, lastY = e.clientY;
       const target = (ev) => {
         const id = dropUnder(ev, attr);
         return id && id !== drag.id ? id : null;
       };
+      const scroller = edgeScroller(() => drag.onOver(target({ clientX: lastX, clientY: lastY })));
       beginPointerDrag(e, {
         onBegin: (ev) => {
           const r = row.getBoundingClientRect();
@@ -2874,10 +2960,13 @@ function dragHandlers(drag) {
           drag.onStart();
         },
         onMove: (ev) => {
+          lastX = ev.clientX; lastY = ev.clientY;
           if (ghost) move(ev.clientX - offX, ev.clientY - offY);
+          scroller.at(ev.clientY);
           drag.onOver(target(ev));
         },
         onEnd: (ev) => {
+          scroller.stop();
           ghost?.remove();
           ghost = null;
           drag.onDrop(ev ? target(ev) : null);
@@ -2894,76 +2983,28 @@ function dragHandlers(drag) {
   };
 }
 
-function TaskRow({ t, burst, cats, onToggle, onToggleAll, onDelete, onEdit, onAddSubtask, onToggleSubtask, onDeleteSubtask, onEditSubtask, now, sessionMin, inSession, queuedSubs, sessionEmoji, drag }) {
+function TaskRow({ t, burst, cats, onToggle, onToggleAll, onDelete, onEdit, onAddSubtask, onToggleSubtask, onDeleteSubtask, onEditSubtask, onMoveSubtask, now, sessionMin, inSession, queuedSubs, sessionEmoji, drag }) {
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const [title, setTitle] = useState(t.title);
-  const [minutes, setMinutes] = useState(t.minutes || t.est * sessionMin);
-  const [dueDate, setDueDate] = useState(t.dueDate || "");
-  const [cat, setCat] = useState(t.cat);
 
   const hasSubs = t.subtasks && t.subtasks.length > 0;
-
-  const startEdit = () => {
-    setTitle(t.title); setMinutes(t.minutes || t.est * sessionMin); setDueDate(t.dueDate || ""); setCat(t.cat);
-    setEditing(true);
-  };
-  const commit = () => {
-    if (!title.trim()) return;
-    // `cat` rides along whether or not the rest of the patch does — a task with
-    // subtasks sends a title-only patch but can still be refiled
-    onEdit(t.id, hasSubs
-      ? { title: title.trim(), cat }
-      : { title: title.trim(), minutes: Math.max(5, +minutes || 25), dueDate: dueDate || null, cat });
-    setEditing(false);
-  };
-
-  /* Every section, not just this view's: a task filed under Work can turn out to
-     be personal, and the group labels are what make it clear the row is about to
-     leave the tab you are looking at. */
-  const groups = [["work", "Work"], ["personal", "Personal"]]
-    .filter(([g]) => (cats || []).some((c) => c.group === g));
+  const sdrag = useListDrag(() => (t.subtasks || []).map((x) => x.id),
+    (from, to) => onMoveSubtask?.(from, to), "subdrag");
+  const subCarried = (t.subtasks || []).find((x) => x.id === sdrag.dragId);
 
   const urgency = taskUrgency(t, now);
 
   if (editing) {
     return (
-      <div className="taskrow taskrow-editing">
-        <input className="field" style={{ flex: 1, minWidth: 140 }} value={title}
-          onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && commit()} autoFocus />
-        {hasSubs ? (
-          <span className="sub" style={{ fontSize: 12 }}>{t.subtasks.length} subtasks — time & due date follow them</span>
-        ) : (
-          <>
-            <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 5 }}>
-              <input type="number" min="5" step="5" className="field" style={{ width: 64 }} value={minutes}
-                onChange={(e) => setMinutes(e.target.value)} onKeyDown={(e) => e.key === "Enter" && commit()} /> min
-            </label>
-            <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 5 }}>
-              due <input type="date" className="field" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-            </label>
-          </>
-        )}
-        {groups.length > 0 && (
-          <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 5 }}>
-            in <select className="field" value={cat} onChange={(e) => setCat(e.target.value)} title="Move to another section">
-              {groups.map(([g, label]) => (
-                <optgroup key={g} label={label}>
-                  {cats.filter((c) => c.group === g).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </optgroup>
-              ))}
-            </select>
-          </label>
-        )}
-        <button className="btn primary" onClick={commit}>Save</button>
-        <button className="btn ghost" onClick={() => setEditing(false)}>Cancel</button>
-      </div>
+      <TaskEditForm item={t} cats={cats} sessionMin={sessionMin}
+        onSave={(patch) => { onEdit(t.id, patch); setEditing(false); }}
+        onCancel={() => setEditing(false)} />
     );
   }
 
   return (
     <>
-      <div className={`taskrow ${t.checked ? "done" : ""} ${burstClass(burst, t.id)} ${drag?.dragging ? "dragging" : ""} ${drag?.over || ""} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}
+      <div className={`taskrow ${t.checked ? "done" : ""} ${burstClass(burst, t.id)} ${drag?.dragging ? "dragging" : ""} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}
         {...dragHandlers(drag)} title="Drag to reorder">
         <span className="taskmain">
           <span className="checkwrap">
@@ -3002,17 +3043,25 @@ function TaskRow({ t, burst, cats, onToggle, onToggleAll, onDelete, onEdit, onAd
           <button className="subtoggle" onClick={() => setExpanded((e) => !e)} title={expanded ? "Hide subtasks" : "Subtasks"}>
             {expanded ? "▾" : "▸"}
           </button>
-          <button className="xbtn" onClick={startEdit} title="Edit task">✎</button>
+          <button className="xbtn" onClick={() => setEditing(true)} title="Edit task">✎</button>
           <button className="xbtn" onClick={() => onDelete(t.id)} title="Delete task">✕</button>
         </span>
       </div>
       {expanded && (
         <div className="subtasks">
-          {(t.subtasks || []).map((s) => (
-            <SubtaskRow key={s.id} sub={s} onToggle={() => onToggleSubtask(s.id)} onDelete={() => onDeleteSubtask(s.id)}
-              onEdit={(patch) => onEditSubtask(s.id, patch)} now={now}
-              inSession={!!queuedSubs?.has(qidFor(t.id, s.id))} sessionEmoji={sessionEmoji} />
-          ))}
+          {(t.subtasks || []).map((s) => {
+            const slot = sdrag.slotFor(s.id);
+            return (
+            <React.Fragment key={s.id}>
+              {slot === "before" && <DropSlot title={subCarried?.title} id={s.id} attr="subdrag" />}
+              <SubtaskRow sub={s} onToggle={() => onToggleSubtask(s.id)} onDelete={() => onDeleteSubtask(s.id)}
+                onEdit={(patch) => onEditSubtask(s.id, patch)} now={now}
+                inSession={!!queuedSubs?.has(qidFor(t.id, s.id))} sessionEmoji={sessionEmoji}
+                drag={sdrag.drag(s.id)} />
+              {slot === "after" && <DropSlot title={subCarried?.title} id={s.id} attr="subdrag" />}
+            </React.Fragment>
+            );
+          })}
           <AddSubtaskRow onAdd={(title2, minutes2, dueDate2) => onAddSubtask(title2, minutes2, dueDate2)} />
         </div>
       )}
@@ -3121,6 +3170,22 @@ const delSubtask = (data, setData, taskId, subId, setBurst) => updateSubtasks(
   setBurst,
 );
 // editing a subtask's minutes/due date re-derives the parent's totals, same as adding one
+/* Through updateSubtasks like every other subtask write, even though order
+   changes nothing the parent derives — the one route is what keeps the burst
+   and the re-derive from being forgotten by the next thing added here. */
+const moveSubtask = (data, setData, taskId, fromId, toId, setBurst) => updateSubtasks(
+  data, setData, taskId,
+  (t) => {
+    const subs = t.subtasks || [];
+    const from = subs.findIndex((x) => x.id === fromId), to = subs.findIndex((x) => x.id === toId);
+    if (from < 0 || to < 0 || from === to) return t;
+    const next = [...subs];
+    next.splice(to, 0, next.splice(from, 1)[0]);
+    return { ...t, subtasks: next };
+  },
+  setBurst,
+);
+
 const editSubtask = (data, setData, taskId, subId, patch, setBurst) => updateSubtasks(
   data, setData, taskId,
   (t) => ({ ...t, subtasks: t.subtasks.map((s) => (s.id === subId ? { ...s, ...patch } : s)) }),
@@ -3134,7 +3199,65 @@ const toggleAllSubtasks = (data, setData, taskId, setBurst) => {
   updateSubtasks(data, setData, taskId, (t) => ({ ...t, subtasks: t.subtasks.map((s) => ({ ...s, checked: target })) }), setBurst);
 };
 
-function SubtaskRow({ sub, onToggle, onDelete, onEdit, now, inSession, sessionEmoji, onTimer, timing }) {
+/* The one edit form for a piece of work, used by a task's row in Work/Personal,
+   by the same task's row in the session, and by a queued subtask. Two places
+   showing one task should not drift into two different forms. `cats` omitted
+   means no section picker — a subtask lives on its task and has nowhere to go. */
+function TaskEditForm({ item, cats, sessionMin, onSave, onCancel }) {
+  const hasSubs = !!(item.subtasks && item.subtasks.length);
+  const [title, setTitle] = useState(item.title);
+  const [minutes, setMinutes] = useState(item.minutes || (item.est ? item.est * sessionMin : 25));
+  const [dueDate, setDueDate] = useState(item.dueDate || "");
+  const [cat, setCat] = useState(item.cat);
+  const groups = [["work", "Work"], ["personal", "Personal"]]
+    .filter(([g]) => (cats || []).some((c) => c.group === g));
+
+  const commit = () => {
+    if (!title.trim()) return;
+    // `cat` rides along whether or not the rest of the patch does — a task with
+    // subtasks sends no timings but can still be refiled
+    const patch = hasSubs
+      ? { title: title.trim() }
+      : { title: title.trim(), minutes: Math.max(5, +minutes || 25), dueDate: dueDate || null };
+    onSave(cats ? { ...patch, cat } : patch);
+  };
+  const enter = (e) => e.key === "Enter" && commit();
+
+  return (
+    <div className="taskrow taskrow-editing">
+      <input className="field" style={{ flex: 1, minWidth: 140 }} value={title} autoFocus
+        onChange={(e) => setTitle(e.target.value)} onKeyDown={enter} />
+      {hasSubs ? (
+        <span className="sub" style={{ fontSize: 12 }}>{item.subtasks.length} subtasks — time &amp; due date follow them</span>
+      ) : (
+        <>
+          <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 5 }}>
+            <input type="number" min="5" step="5" className="field" style={{ width: 64 }} value={minutes}
+              onChange={(e) => setMinutes(e.target.value)} onKeyDown={enter} /> min
+          </label>
+          <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 5 }}>
+            due <input type="date" className="field" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+          </label>
+        </>
+      )}
+      {groups.length > 0 && (
+        <label style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 5 }}>
+          in <select className="field" value={cat} onChange={(e) => setCat(e.target.value)} title="Move to another section">
+            {groups.map(([g, label]) => (
+              <optgroup key={g} label={label}>
+                {cats.filter((c) => c.group === g).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </optgroup>
+            ))}
+          </select>
+        </label>
+      )}
+      <button className="btn primary" onClick={commit}>Save</button>
+      <button className="btn ghost" onClick={onCancel}>Cancel</button>
+    </div>
+  );
+}
+
+function SubtaskRow({ sub, onToggle, onDelete, onEdit, now, inSession, sessionEmoji, onTimer, timing, drag }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(sub.title);
   const [minutes, setMinutes] = useState(sub.minutes);
@@ -3170,7 +3293,8 @@ function SubtaskRow({ sub, onToggle, onDelete, onEdit, now, inSession, sessionEm
   }
 
   return (
-    <div className={`subtaskrow ${sub.checked ? "done" : ""} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}>
+    <div className={`subtaskrow ${sub.checked ? "done" : ""} ${drag?.dragging ? "dragging" : ""} ${urgency === "due-today" ? "due-today" : ""} ${urgency === "overdue" ? "overdue" : ""}`}
+      title={drag ? "Drag to reorder" : undefined} {...dragHandlers(drag)}>
       <button className={`check small ${sub.checked ? "on" : ""}`} aria-label={sub.checked ? "Mark not done" : "Mark done"} onClick={onToggle}>✓</button>
       <span className="subtasktitle">{sub.title}</span>
       {inSession && <span className="tagsess">{sessionEmoji} session</span>}
@@ -3809,39 +3933,22 @@ function TaskGroupView({ data, setData, now, group, title, sessionEmoji }) {
   // and must not depend on a re-render having landed between dragstart and drop
   const dragRef = useRef(null);
   const [dragId, setDragId] = useState(null); // mirror, purely for the drag styling
-  const taskDragRef = useRef(null);
-  const [taskDragId, setTaskDragId] = useState(null);
-  const [overId, setOverId] = useState(null);
+
   // a queued subtask marks its parent too, so the pill means "some of this is
   // in the session" rather than going missing whenever you queued the parts
   const queued = new Set((data.sessionQueue || []).map(qidTask));
   const queuedSubs = new Set(data.sessionQueue || []);
 
   // which edge of the hovered row to draw the insertion line on, matching where
-  // moveTask will actually drop it: below when moving down, above when moving up
-  const overClass = (targetId) => {
-    if (overId !== targetId) return "";
-    const fromId = taskDragRef.current;
-    if (!fromId || fromId === targetId) return "";
-    const from = data.tasks.find((t) => t.id === fromId), to = data.tasks.find((t) => t.id === targetId);
-    if (!from || !to || from.cat !== to.cat) return "";
-    const ids = data.tasks.filter((t) => t.cat === from.cat).map((t) => t.id);
-    return ids.indexOf(fromId) < ids.indexOf(targetId) ? "dragover-after" : "dragover-before";
+  /* Only this task's own category can take it, which is what keeps a drag a
+     reorder rather than a refile — the edit form does the refiling. */
+  const taskOrder = (id) => {
+    const t = data.tasks.find((x) => x.id === id);
+    return t ? data.tasks.filter((x) => x.cat === t.cat).map((x) => x.id) : [];
   };
-  const endTaskDrag = () => { taskDragRef.current = null; setTaskDragId(null); setOverId(null); };
-  /* `onOver`/`onDrop` are handed whichever row the pointer is over — the drag
-     no longer rides on dragover events fired at each row, it resolves the
-     target itself. The fade can be set straight away now that the ghost is a
-     clone taken before it rather than a snapshot the browser takes for us. */
-  const taskDrag = (id) => ({
-    id,
-    dragging: taskDragId === id,
-    over: overClass(id),
-    onStart: () => { taskDragRef.current = id; setTaskDragId(id); },
-    onEnd: endTaskDrag,
-    onOver: (tid) => setOverId((o) => (o === tid ? o : tid)),
-    onDrop: (tid) => { if (tid) moveTask(taskDragRef.current, tid); endTaskDrag(); },
-  });
+  // the mover is referenced lazily: it is declared further down the component
+  const tdrag = useListDrag(taskOrder, (from, to) => moveTask(from, to), "rowdrag");
+  const carried = data.tasks.find((t) => t.id === tdrag.dragId);
 
   const cats = catsIn(data, group);
   const tasks = data.tasks.filter((t) => cats.some((c) => c.id === t.cat));
@@ -3861,6 +3968,7 @@ function TaskGroupView({ data, setData, now, group, title, sessionEmoji }) {
   const toggleSub = (id, subId) => toggleSubtask(data, setData, id, subId, setBurst);
   const delSub = (id, subId) => delSubtask(data, setData, id, subId, setBurst);
   const editSub = (id, subId, patch) => editSubtask(data, setData, id, subId, patch, setBurst);
+  const moveSub = (id, fromId, toId) => moveSubtask(data, setData, id, fromId, toId, setBurst);
 
   // newest first — the reason to open the archive is nearly always something
   // finished recently
@@ -3978,15 +4086,23 @@ function TaskGroupView({ data, setData, now, group, title, sessionEmoji }) {
               )}
             </div>
             <div className="card">
-              {list.map((t) => (
-                <TaskRow key={t.id} t={t} burst={burst} cats={allCats(data)} onToggle={toggle} onToggleAll={() => toggleAll(t.id)}
-                  onDelete={delTask} onEdit={edit} now={now} sessionMin={data.settings.work}
-                  inSession={queued.has(t.id)} queuedSubs={queuedSubs} sessionEmoji={sessionEmoji} drag={taskDrag(t.id)}
-                  onAddSubtask={(t2, minutes, dueDate) => addSub(t.id, t2, minutes, dueDate)}
-                  onToggleSubtask={(subId) => toggleSub(t.id, subId)}
-                  onDeleteSubtask={(subId) => delSub(t.id, subId)}
-                  onEditSubtask={(subId, patch) => editSub(t.id, subId, patch)} />
-              ))}
+              {list.map((t) => {
+                const slot = tdrag.slotFor(t.id);
+                return (
+                <React.Fragment key={t.id}>
+                  {slot === "before" && <DropSlot title={carried?.title} id={t.id} />}
+                  <TaskRow t={t} burst={burst} cats={allCats(data)} onToggle={toggle} onToggleAll={() => toggleAll(t.id)}
+                    onDelete={delTask} onEdit={edit} now={now} sessionMin={data.settings.work}
+                    inSession={queued.has(t.id)} queuedSubs={queuedSubs} sessionEmoji={sessionEmoji} drag={tdrag.drag(t.id)}
+                    onAddSubtask={(t2, minutes, dueDate) => addSub(t.id, t2, minutes, dueDate)}
+                    onToggleSubtask={(subId) => toggleSub(t.id, subId)}
+                    onDeleteSubtask={(subId) => delSub(t.id, subId)}
+                    onEditSubtask={(subId, patch) => editSub(t.id, subId, patch)}
+                    onMoveSubtask={(fromId, toId) => moveSub(t.id, fromId, toId)} />
+                  {slot === "after" && <DropSlot title={carried?.title} id={t.id} />}
+                </React.Fragment>
+                );
+              })}
               {list.length === 0 && <div className="emptystate" style={{ padding: "14px 16px" }}>No tasks yet.</div>}
               <AddTaskRow onAdd={(t2, minutes, oneOnOne, dueDate) => addTask(c.id, t2, minutes, oneOnOne, dueDate)} />
             </div>
@@ -4978,6 +5094,7 @@ function GuestColumn({ guest, s, cycle, now, onAddTask, onToggleTask, onDelTask,
 function QueueRow({ entry, data, setData, now, isActive, wholeSession, burst, setBurst, onComplete, onRemove, onPush, onTimer, timing, onTimerQid, timingQid, drag }) {
   const [expanded, setExpanded] = useState(false);
   const [pushing, setPushing] = useState(false);
+  const [editing, setEditing] = useState(false);
   const t = entry.item;
   const minsLeft = minutesLeft(t, data.settings.work);
   // A queued subtask is one line of work, not a container: it shows its parent
@@ -4988,11 +5105,38 @@ function QueueRow({ entry, data, setData, now, isActive, wholeSession, burst, se
   const burstId = isSub ? entry.sub.id : t.id;
   const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
 
+  const sdrag = useListDrag(() => subs.map((x) => x.id),
+    (from, to) => moveSubtask(data, setData, t.id, from, to, setBurst), "subdrag");
+  const subCarried = subs.find((x) => x.id === sdrag.dragId);
+
+  /* The same task, edited from wherever you happen to be looking at it. A
+     queued *subtask* edits the subtask itself — it is the piece of work on the
+     row, and its parent is only there for context. */
+  if (editing) {
+    return (
+      <TaskEditForm item={isSub ? entry.sub : t} cats={isSub ? null : allCats(data)} sessionMin={data.settings.work}
+        onSave={(patch) => {
+          if (isSub) editSubtask(data, setData, entry.task.id, entry.sub.id, patch, setBurst);
+          else editTask(data, setData, t.id, patch);
+          setEditing(false);
+        }}
+        onCancel={() => setEditing(false)} />
+    );
+  }
+
   return (
     <>
-      <div className={`qrow ${t.checked ? "done" : ""} ${burstClass(burst, burstId)} ${isActive ? "active" : ""} ${drag?.dragging ? "dragging" : ""} ${drag?.over || ""}`}
+      <div className={`qrow ${t.checked ? "done" : ""} ${burstClass(burst, burstId)} ${isActive ? "active" : ""} ${drag?.dragging ? "dragging" : ""}`}
         onClick={onComplete} title="Click to mark done · drag to reorder"
         {...dragHandlers(drag)}>
+        {/* In the gutter rather than the meta run: setting something aside is a
+            rarer act than the rest of the row's controls and was crowding them,
+            and a queue of twenty showed twenty arrows. */}
+        {onPush && !t.checked && (
+          <button className={`qpushbtn ${pushing ? "on" : ""}`}
+            title="Push off — set it aside and have it come back later"
+            onClick={stop(() => setPushing((v) => !v))}>↷</button>
+        )}
         <span className="qmain">
           <span className="checkwrap">
             <button className={`check ${t.checked ? "on" : ""}`} aria-label={t.checked ? "Mark not done" : "Mark done"}>✓</button>
@@ -5016,13 +5160,10 @@ function QueueRow({ entry, data, setData, now, isActive, wholeSession, burst, se
           {!t.checked && minsLeft > 0 && (
             <span className="qlen" title={`About ${fmtDur(minsLeft)} of work left on this`}>{fmtDur(minsLeft)}</span>
           )}
+          {/* How long is left is the useful number here; how many pomodoros that
+              divides into is the timer's business, not the queue's — and beside
+              the subtask count it read as a second, contradictory fraction. */}
           {subs.length > 0 && <span className="subprogress">{doneSubs}/{subs.length}</span>}
-          <span className="pcount">{t.done}/{t.est}</span>
-          {onPush && !t.checked && (
-            <button className="subtoggle" style={pushing ? { color: "var(--ink)" } : undefined}
-              title="Push off — set it aside and have it come back later"
-              onClick={stop(() => setPushing((v) => !v))}>↷</button>
-          )}
           {onTimer && !t.checked && (
             <button className="subtoggle" style={timing ? { color: "var(--pine)" } : undefined}
               title={timing ? "This task's timer is running" : "Time just this task — one countdown, no pomodoro"}
@@ -5032,6 +5173,7 @@ function QueueRow({ entry, data, setData, now, isActive, wholeSession, burst, se
             <button className="subtoggle" title={expanded ? "Hide subtasks" : "Subtasks"}
               onClick={stop(() => setExpanded((v) => !v))}>{expanded ? "▾" : "▸"}</button>
           )}
+          <button className="xbtn" title={isSub ? "Edit subtask" : "Edit task"} onClick={stop(() => setEditing(true))}>✎</button>
           <button className="xbtn" title="Remove from session" onClick={stop(onRemove)}>✕</button>
         </span>
       </div>
@@ -5048,14 +5190,21 @@ function QueueRow({ entry, data, setData, now, isActive, wholeSession, burst, se
 
       {expanded && (
         <div className="subtasks qsubtasks">
-          {subs.map((sb) => (
-            <SubtaskRow key={sb.id} sub={sb} now={now}
-              onTimer={onTimerQid && (() => onTimerQid(qidFor(t.id, sb.id)))}
-              timing={timingQid === qidFor(t.id, sb.id)}
-              onToggle={() => toggleSubtask(data, setData, t.id, sb.id, setBurst)}
-              onDelete={() => delSubtask(data, setData, t.id, sb.id, setBurst)}
-              onEdit={(patch) => editSubtask(data, setData, t.id, sb.id, patch, setBurst)} />
-          ))}
+          {subs.map((sb) => {
+            const slot = sdrag.slotFor(sb.id);
+            return (
+            <React.Fragment key={sb.id}>
+              {slot === "before" && <DropSlot title={subCarried?.title} id={sb.id} attr="subdrag" />}
+              <SubtaskRow sub={sb} now={now} drag={sdrag.drag(sb.id)}
+                onTimer={onTimerQid && (() => onTimerQid(qidFor(t.id, sb.id)))}
+                timing={timingQid === qidFor(t.id, sb.id)}
+                onToggle={() => toggleSubtask(data, setData, t.id, sb.id, setBurst)}
+                onDelete={() => delSubtask(data, setData, t.id, sb.id, setBurst)}
+                onEdit={(patch) => editSubtask(data, setData, t.id, sb.id, patch, setBurst)} />
+              {slot === "after" && <DropSlot title={subCarried?.title} id={sb.id} attr="subdrag" />}
+            </React.Fragment>
+            );
+          })}
           <AddSubtaskRow onAdd={(title, minutes, dueDate) => addSubtask(data, setData, t.id, title, minutes, dueDate, setBurst)} />
         </div>
       )}
@@ -5256,9 +5405,6 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
   const [draft, setDraft] = useState({ title: "", minutes: 25, group: "work", cat: "" });
   const [creating, setCreating] = useState(false);
   const [burst, setBurst] = useState(null);
-  const qDragRef = useRef(null);
-  const [qDragId, setQDragId] = useState(null);
-  const [qOverId, setQOverId] = useState(null);
 
   const queueIds = data.sessionQueue || [];
   const nowMs = now.getTime();
@@ -5365,18 +5511,8 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
     ...g, tasks: g.tasks.map((t) => (t.id === tid ? { ...t, checked: !t.checked } : t)),
   }));
 
-  const endQDrag = () => { qDragRef.current = null; setQDragId(null); setQOverId(null); };
-  const qDrag = (id) => ({
-    id,
-    dragging: qDragId === id,
-    over: qOverId === id && qDragRef.current && qDragRef.current !== id
-      ? (queueIds.indexOf(qDragRef.current) < queueIds.indexOf(id) ? "dragover-after" : "dragover-before")
-      : "",
-    onStart: () => { qDragRef.current = id; setQDragId(id); },
-    onEnd: endQDrag,
-    onOver: (tid) => setQOverId((o) => (o === tid ? o : tid)),
-    onDrop: (tid) => { if (tid) moveInQueue(qDragRef.current, tid); endQDrag(); },
-  });
+  const qdrag = useListDrag(() => queueIds, moveInQueue, "rowdrag");
+  const qCarried = entries.find((q) => q.qid === qdrag.dragId)?.item;
   const completeTask = (q) => {
     if (q.sub) toggleSubtask(data, setData, q.task.id, q.sub.id, setBurst);
     else if ((q.task.subtasks || []).length) toggleAllSubtasks(data, setData, q.task.id, setBurst);
@@ -5478,13 +5614,15 @@ function SessionView({ data, setData, sessionEmoji, now, timer, taskTimer, sessi
               onClick={() => ignoreEvent(ev.id)}>✕</button>
           </div>
         ))}
+        {qdrag.slotFor(q.qid) === "before" && <DropSlot title={qCarried?.title} id={q.qid} />}
         <QueueRow entry={q} data={data} setData={setData} now={now}
           isActive={activeEntry?.qid === q.qid} wholeSession={byTask} burst={burst} setBurst={setBurst}
           onComplete={() => completeTask(q)} onRemove={() => removeFromQueue(q.qid)}
           onPush={(when) => pushOff(q.qid, when)}
           onTimer={taskTimer && (() => taskTimer.startFor(q))} timing={taskTimer?.state?.qid === q.qid}
           onTimerQid={taskTimer && timeSubtask} timingQid={taskTimer?.state?.qid}
-          drag={qDrag(q.qid)} />
+          drag={qdrag.drag(q.qid)} />
+        {qdrag.slotFor(q.qid) === "after" && <DropSlot title={qCarried?.title} id={q.qid} />}
         {(blockers[t.id]?.during || []).map((ev) => (
           <div className="qevent during" key={ev.id} title="This lands in the middle of the task above">
             <span className="qeventtime">{fmtClock(ev.start)}–{fmtClock(ev.end)}</span>
