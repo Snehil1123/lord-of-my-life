@@ -715,17 +715,29 @@ tr:hover .xbtn, .taskrow:hover .xbtn, .phaserow:hover .xbtn, .budgetrow:hover .x
 .pickpanel.gridmode{max-height:none;}
 .catgridgroup + .catgridgroup{margin-top:4px;}
 .catgrid{display:grid; grid-template-columns:repeat(auto-fill, minmax(118px, 1fr)); gap:6px; padding:2px 2px 6px;}
+/* Picked has to differ in *kind*, not in degree. Every tile carries its
+   section's colour, so when the chosen one was only a stronger wash of the same
+   hue it was lost among eight others that were already shouting. Unpicked tiles
+   are now nearly plain — the colour survives as the left edge, which is how a
+   section is identified everywhere else — and the picked one is filled solid
+   and inverted. */
 .cattile{
+  position:relative;
   display:flex; flex-direction:column; align-items:flex-start; justify-content:space-between; gap:4px;
   padding:9px 10px; text-align:left; border-radius:8px;
-  border:1px solid color-mix(in srgb, var(--tile) 40%, var(--line)); border-left:4px solid var(--tile);
-  background:color-mix(in srgb, var(--tile) 13%, var(--card));
-  color:var(--ink); font-size:14px; font-weight:600; transition:background .12s;
+  border:1px solid var(--line); border-left:4px solid var(--tile);
+  background:color-mix(in srgb, var(--tile) 5%, var(--card));
+  color:var(--ink); font-size:14px; font-weight:600;
+  transition:background .12s, color .12s;
 }
-.cattile:hover{background:color-mix(in srgb, var(--tile) 26%, var(--card));}
-.cattile.on{background:color-mix(in srgb, var(--tile) 36%, var(--card)); box-shadow:inset 0 0 0 2px var(--tile);}
+.cattile:hover{background:color-mix(in srgb, var(--tile) 20%, var(--card));}
+.cattile.on{
+  background:var(--tile); border-color:var(--tile); color:var(--paper); font-weight:700;
+  box-shadow:0 2px 10px color-mix(in srgb, var(--tile) 45%, transparent);
+}
+.cattile.on .cattilecount{color:color-mix(in srgb, var(--paper) 70%, var(--tile));}
 .cattile:disabled{opacity:.38;}
-.cattile:disabled:hover{background:color-mix(in srgb, var(--tile) 13%, var(--card));}
+.cattile:disabled:hover{background:color-mix(in srgb, var(--tile) 5%, var(--card));}
 .cattilename{max-width:100%; line-height:1.25; overflow-wrap:break-word;}
 .cattilecount{font-family:var(--font-mono); font-size:11.5px; font-weight:400; color:var(--muted);}
 .pickcrumb{display:flex; align-items:center; gap:8px; padding:0 2px 8px; border-bottom:1px solid var(--line); margin-bottom:4px;}
